@@ -62,9 +62,12 @@ function isMinified(text) {
 }
 const VENDOR_HOST = /(api\.(anthropic|openai|cohere|mistral|groq)\.|[a-z0-9-]+\.openai\.azure\.com|openai\.azure\.com|generativelanguage\.googleapis\.com|api-inference\.huggingface\.co|api\.replicate\.com|bedrock(-runtime)?\.[a-z0-9-]+\.amazonaws\.com)/i;
 // The chat-completions payload shape is a reliable AI-call fingerprint even when
-// the host/SDK are obfuscated (string-assembled, dynamic import, env var).
-const AI_PAYLOAD = /messages\s*:\s*\[\s*\{[^]*?\brole\b\s*:\s*['"](system|user|assistant)['"][^]*?\bcontent\b/i;
-const AI_MODEL = /\bmodel\s*:\s*['"](gpt-|claude-|gemini|mistral|llama|text-embedding|text-davinci|chat-bison|o[134]-)/i;
+// the host/SDK are obfuscated (string-assembled, dynamic import, env var). The
+// key/value separator is language-agnostic: JS object `model: 'gpt-…'`, JSON /
+// Python-dict `"model": "gpt-…"`, Python kwargs / C# anon `model = "gpt-…"` —
+// so the keys may be quoted and the separator may be `:` or `=`.
+const AI_PAYLOAD = /\bmessages\b["'`]?\s*[:=]\s*\[\s*\{[^]*?\brole\b["'`]?\s*[:=]\s*['"`](system|user|assistant)['"`][^]*?\bcontent\b/i;
+const AI_MODEL = /\bmodel\b["'`]?\s*[:=]\s*['"`](gpt-|claude-|gemini|mistral|llama|text-embedding|text-davinci|chat-bison|o[134]-)/i;
 // A real client deliverable means an actual document-generation LIBRARY produced
 // an artifact — not just a function NAMED generateReport / exportToPdf (reliance
 // is un-inferable; a name must not auto-escalate to Approve).
@@ -118,11 +121,24 @@ const METHOD_WRITE = /method\s*:\s*['"`](put|patch|delete)['"`]/i;
 // NOT match a bare `.create(`/`.save(` — those collide with AI SDKs
 // (messages.create) and generic builders; ORM writes are caught via the driver
 // import or a specific mutation method instead.
-const DB_ORM_WRITE = /(insert\s+into|update\s+\w+\s+set|delete\s+from|upsert|merge\s+into|create\s+table|alter\s+table|prisma\.[a-z]+\.(create|update|upsert|delete)|\.(insertone|insertmany|updateone|updatemany|deleteone|deletemany|bulkcreate|findoneandupdate)\s*\(|createpool\s*\(|createconnection\s*\(|database_url|(postgres|postgresql|mysql|mongodb):\/\/|\b(pg|mysql2?|sqlite3|mongodb|mongoose|psycopg2|sqlalchemy|knex|sequelize|@prisma\/client)\b)/i;
+// Note the `(?!:)` on the driver-name alternation: a driver word in a `scheme:`
+// DSN position (e.g. PDO's "mysql:host=…") is a read/write-agnostic CONNECTION,
+// not a mutation, so it must not read as a write (a `mysql://` URL is still caught
+// by the explicit `://` token, and an imported driver like `mysql2`/`psycopg2`
+// still matches because it isn't followed by a colon).
+const DB_ORM_WRITE = /(insert\s+into|update\s+\w+\s+set|delete\s+from|upsert|merge\s+into|create\s+table|alter\s+table|prisma\.[a-z]+\.(create|update|upsert|delete)|\.(insertone|insertmany|updateone|updatemany|deleteone|deletemany|bulkcreate|findoneandupdate)\s*\(|createpool\s*\(|createconnection\s*\(|database_url|(postgres|postgresql|mysql|mongodb):\/\/|\b(pg|mysql2?|sqlite3|mongodb|mongoose|psycopg2|sqlalchemy|knex|sequelize|@prisma\/client)\b(?!:))/i;
 // A genuine backend runtime — framework, listener, serverless dir, or container —
 // not merely a client file that happens to be named app.js / main.js / server.js.
 const BACKEND_STRONG = /(import\s+express|require\(['"]express['"]\)|"express"\s*:|\bfastify\b|@nestjs\/|\bkoa\b|from\s+flask\s+import|flask\(__name__\)|from\s+fastapi\s+import|fastapi\s*\(|app\.listen\s*\(|http\.createserver|createserver\s*\(|app\.(get|post|put|delete)\s*\()/i;
-const BACKEND_PATH = /(pages\/api\/|app\/api\/.*\/route\.(js|ts)|netlify\/functions\/|(^|\/)functions\/.*\.(js|ts)$|(^|\/)dockerfile$|docker-compose|(^|\/)procfile$)/i;
+// Server runtimes the JS/Python-tuned list above misses, so a benign-but-standalone
+// server (Go/C#/Java/PHP/other-Python) is still §6 Lane 2 even with deterministic
+// logic. A live server process can't run on the static shared host.
+const BACKEND_OTHER = /(http\.ListenAndServe|http\.NewServeMux|gin\.(Default|New)\s*\(|echo\.New\s*\(|fiber\.New\s*\(|chi\.NewRouter\s*\(|mux\.NewRouter\s*\(|\.Run\s*\(\s*['"`]:\d|WebApplication\.CreateBuilder|app\.Map(Get|Post|Put|Delete|Patch|Group|Methods|Controllers)|\bapp\.Run\s*\(|:\s*ControllerBase\b|\[ApiController\]|@RestController|@SpringBootApplication|@(Get|Post|Put|Delete|Patch|Request)Mapping|SpringApplication\.run|uvicorn\.run|\bgunicorn\b|from\s+django\b|\baiohttp\b|\btornado\b|\bsanic\b|\bstarlette\b|<\?php)/i;
+const BACKEND_PATH = /(pages\/api\/|app\/api\/.*\/route\.(js|ts)|netlify\/functions\/|(^|\/)functions\/.*\.(js|ts)$|(^|\/)dockerfile$|docker-compose|(^|\/)procfile$|\.php$)/i;
+// ORM / driver writes the SQL-and-JS-ORM-tuned DB_ORM_WRITE misses: EF Core
+// (.SaveChanges), R DBI (dbWriteTable/dbExecute), pandas (.to_sql), JPA/JDBC.
+// Each token is framework-specific, so it can't collide with a generic call.
+const EXTRA_ORM_WRITE = /(\.SaveChanges(Async)?\s*\(|\bdbWriteTable\s*\(|\bdbAppendTable\s*\(|\bdbExecute\s*\(|\bdbSendStatement\s*\(|\.to_sql\s*\(|entityManager\.(persist|merge)\s*\(|\.executeUpdate\s*\(|jdbcTemplate\.(update|batchUpdate)\s*\()/i;
 
 // Pure resolver: from the code-derived facts + user assumptions, produce the
 // verdict and which §5 conditions hold. Pulled out of analyze() so we can answer
@@ -216,7 +232,8 @@ export function analyze(corpus, assumptions = {}) {
   const proxyAI = proxyPresent && !directAI;
   const localML = fired('logic-probabilistic-ml-inference');
   const backendEv = entry('backend-server-present')?.evidence || [];
-  const backend = backendEv.some((e) => BACKEND_STRONG.test(e.text)) || backendEv.some((e) => BACKEND_PATH.test(e.path));
+  const backend = backendEv.some((e) => BACKEND_STRONG.test(e.text)) || backendEv.some((e) => BACKEND_PATH.test(e.path))
+    || grep(BACKEND_OTHER) || cleanFiles.some((f) => /\.php$/i.test(f.path));
   // A write to a system of record: DB/ORM/SQL or BaaS, a mutating call to an
   // external host, a same-origin POST to a write-y path, an ORM-chain write, a Go
   // (gorm/http) write, or a save to a network share — NOT a POST to /api/chat.
@@ -224,7 +241,7 @@ export function analyze(corpus, assumptions = {}) {
   const dbWrite = dbOrmWrite || fired('backend-as-a-service-write')
     || grep(MUTATING_EXTERNAL) || grep(METHOD_WRITE) || grep(MUTATING_FETCH_EXTERNAL)
     || grep(RELATIVE_POST_WRITE) || grep(XHR_MUTATE_EXTERNAL) || grep(SHARED_PATH_WRITE)
-    || grep(ORM_CHAIN_WRITE) || grep(GO_WRITE);
+    || grep(ORM_CHAIN_WRITE) || grep(GO_WRITE) || grep(EXTRA_ORM_WRITE);
   const cdnScript = fired('third-party-cdn-script') || fired('third-party-analytics-telemetry');
   const outbound = fired('outbound-network-call-nonallowlisted');
   const persistence = fired('client-persistence-sensitive');

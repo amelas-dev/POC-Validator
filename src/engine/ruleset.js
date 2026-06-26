@@ -47,7 +47,7 @@ export const SIGNALS = [
     mapsTo: "backend-needed",
     effect: "context-needed",
     confidence: "moderate",
-    patterns: ["import\\s+express|require\\(['\"]express['\"]\\)|['\"]express['\"]\\s*:", "fastify|@nestjs/|koa", "from\\s+flask\\s+import|Flask\\(__name__\\)", "from\\s+fastapi\\s+import|FastAPI\\s*\\(", "app\\.listen\\s*\\(", "http\\.createServer|createServer\\s*\\(", "app\\.(get|post|put|delete)\\s*\\(", "pages/api/.*\\.(js|ts)$", "app/api/.*/route\\.(js|ts)$", "(^|/)(server|app|main)\\.(js|ts|py)$", "(^|/)Dockerfile$", "docker-compose\\.ya?ml$", "(^|/)Procfile$", "netlify/functions/", "functions/.*\\.(js|ts)$"],
+    patterns: ["import\\s+express|require\\(['\"]express['\"]\\)|['\"]express['\"]\\s*:", "fastify|@nestjs/|koa", "from\\s+flask\\s+import|Flask\\(__name__\\)", "from\\s+fastapi\\s+import|FastAPI\\s*\\(", "app\\.listen\\s*\\(", "http\\.createServer|createServer\\s*\\(", "app\\.(get|post|put|delete)\\s*\\(", "pages/api/.*\\.(js|ts)$", "app/api/.*/route\\.(js|ts)$", "(^|/)(server|app|main)\\.(js|ts|py)$", "(^|/)Dockerfile$", "docker-compose\\.ya?ml$", "(^|/)Procfile$", "netlify/functions/", "functions/.*\\.(js|ts)$", "http\\.ListenAndServe|http\\.NewServeMux|gin\\.(Default|New)\\s*\\(|echo\\.New\\s*\\(|fiber\\.New\\s*\\(|chi\\.NewRouter\\s*\\(|mux\\.NewRouter\\s*\\(", "WebApplication\\.CreateBuilder|app\\.Map(Get|Post|Put|Delete|Patch|Group|Methods|Controllers)|\\bapp\\.Run\\s*\\(|:\\s*ControllerBase\\b|\\[ApiController\\]", "@RestController|@SpringBootApplication|@(Get|Post|Put|Delete|Patch|Request)Mapping|SpringApplication\\.run", "uvicorn\\.run|\\bgunicorn\\b|from\\s+django\\b|\\baiohttp\\b|\\btornado\\b|\\bsanic\\b|\\bstarlette\\b", "<\\?php", "(^|/)[^/]*\\.php$"],
   },
   {
     id: "db-source-of-truth-write",
@@ -56,7 +56,7 @@ export const SIGNALS = [
     mapsTo: "5.3",
     effect: "fails-lane1-condition",
     confidence: "moderate",
-    patterns: ["INSERT\\s+INTO", "UPDATE\\s+\\w+\\s+SET", "DELETE\\s+FROM", "UPSERT|MERGE\\s+INTO|CREATE\\s+TABLE|ALTER\\s+TABLE", "\\.(insert|update|upsert|delete|save|create|bulkCreate|findOneAndUpdate)\\s*\\(", "prisma\\.[a-zA-Z]+\\.(create|update|upsert|delete)", "method\\s*:\\s*['\"](POST|PUT|PATCH|DELETE)['\"]", "axios\\.(post|put|patch|delete)\\s*\\(", "(pg|mysql2?|sqlite3|mongodb|mongoose|psycopg2|sqlalchemy|knex|sequelize|@prisma/client)\\b", "createPool\\(|createConnection\\(|DATABASE_URL", "(postgres|postgresql|mysql|mongodb)://"],
+    patterns: ["INSERT\\s+INTO", "UPDATE\\s+\\w+\\s+SET", "DELETE\\s+FROM", "UPSERT|MERGE\\s+INTO|CREATE\\s+TABLE|ALTER\\s+TABLE", "\\.(insert|update|upsert|delete|save|create|bulkCreate|findOneAndUpdate)\\s*\\(", "prisma\\.[a-zA-Z]+\\.(create|update|upsert|delete)", "method\\s*:\\s*['\"](POST|PUT|PATCH|DELETE)['\"]", "axios\\.(post|put|patch|delete)\\s*\\(", "(pg|mysql2?|sqlite3|mongodb|mongoose|psycopg2|sqlalchemy|knex|sequelize|@prisma/client)\\b", "createPool\\(|createConnection\\(|DATABASE_URL", "(postgres|postgresql|mysql|mongodb)://", "\\.SaveChanges(Async)?\\s*\\(|\\bdbWriteTable\\s*\\(|\\bdbAppendTable\\s*\\(|\\bdbExecute\\s*\\(|\\bdbSendStatement\\s*\\(|\\.to_sql\\s*\\(", "entityManager\\.(persist|merge)\\s*\\(|\\.executeUpdate\\s*\\(|jdbcTemplate\\.(update|batchUpdate)\\s*\\("],
   },
   {
     id: "backend-as-a-service-write",
