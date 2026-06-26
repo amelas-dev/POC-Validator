@@ -2,7 +2,7 @@
 // The engine (src/engine) decides; this layer translates the decision into one
 // glanceable, jargon-free answer and tucks the technical audit into a drawer.
 
-import { analyze } from './engine/classify.js';
+import { extractFacts, resolve } from './engine/classify.js';
 import {
   parseGitHubUrl, loadFromGitHub, loadFromFileList, loadFromZip, loadFromPaste,
 } from './engine/sources.js';
@@ -13,9 +13,10 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 
 // ---- state ----------------------------------------------------------------
 let corpus = null;
+let cachedFacts = null;   // assumption-independent facts; scanned once, reused per what-if toggle
 let overrides = {};
-let analyzeStart = 0;
 let lastResult = null;
+let currentWalkClose = null;  // teardown handle for an active walkthrough overlay
 
 // ---- plain-language vocabulary -------------------------------------------
 const OUTCOME = { lane1: 'ready', lane2: 'developer', approve: 'signoff' };
@@ -204,14 +205,16 @@ async function run(loader) {
   clearError();
   overrides = {};
   card.dataset.state = 'analyzing';
-  analyzeStart = performance.now();
   let i = 0; setPhase(PHASES[0]);
-  const timer = setInterval(() => { i = Math.min(i + 1, PHASES.length - 1); setPhase(PHASES[i]); }, 460);
+  // Stop the generic rotation once it reaches the last phase so the loaders' granular
+  // per-file progress ("Reading files… 7/40") can show through instead of being clobbered.
+  const timer = setInterval(() => { i = Math.min(i + 1, PHASES.length - 1); setPhase(PHASES[i]); if (i === PHASES.length - 1) clearInterval(timer); }, 460);
   const dwell = new Promise((r) => setTimeout(r, 1250));
   try {
     const loaded = await loader();
     if (!loaded || !loaded.files || !loaded.files.length) throw new Error('No readable code files were found. Try a different repo, folder, or paste a snippet.');
     corpus = loaded;
+    cachedFacts = extractFacts(corpus); // scan once; what-if toggles reuse this
     await dwell;
     clearInterval(timer);
     const reveal = () => { renderResult(); card.dataset.state = 'result'; };
@@ -220,14 +223,15 @@ async function run(loader) {
     clearInterval(timer);
     card.dataset.state = 'input';
     const m = String((err && err.message) || err);
-    if (/rate limit|private|token|not found/i.test(m)) $('#token-row').classList.add('open'); // reveal exactly when needed
-    showError(friendly(err));
+    if (NEEDS_TOKEN.test(m)) $('#token-row').classList.add('open'); // reveal exactly when needed
+    showError(friendly(m));
   }
 }
-function friendly(err) {
-  const m = String((err && err.message) || err);
-  if (/rate limit/i.test(m)) return m;
-  if (/not found|private/i.test(m)) return m;
+// One source of truth for "this error means the user needs a GitHub token" (rate-limit /
+// private / 404). friendly() takes the already-stringified message — no second stringify.
+const NEEDS_TOKEN = /rate limit|private|token|not found/i;
+function friendly(m) {
+  if (/rate limit|not found|private/i.test(m)) return m;
   if (/reach|network|failed|fetch/i.test(m)) return 'Couldn’t reach that repo. Check the link, or drop the files instead.';
   return m;
 }
@@ -238,7 +242,7 @@ function friendly(err) {
 function slugOf(r) { return r.meta.source === 'github' && r.meta.repoMeta.owner ? `${r.meta.repoMeta.owner}/${r.meta.repoMeta.repo}` : r.meta.label; }
 
 function renderResult() {
-  const r = analyze(corpus, overrides);
+  const r = resolve(cachedFacts, overrides);
   lastResult = r;
   const outcome = OUTCOME[r.verdict.key];
   const v = VERDICT[outcome];
@@ -387,9 +391,10 @@ function startWalkthrough(r) {
   let timer = null;
   const stopSpeak = () => { try { window.speechSynthesis.cancel(); } catch {} };
   const speak = (t) => { if (!voice || !('speechSynthesis' in window)) return; try { window.speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(t); u.rate = 1.03; window.speechSynthesis.speak(u); } catch {} };
-  const close = () => { clearTimeout(timer); stopSpeak(); ov.remove(); };
+  const close = () => { clearTimeout(timer); stopSpeak(); ov.remove(); currentWalkClose = null; };
   const go = (n) => { idx = Math.max(0, Math.min(steps.length - 1, n)); render(); };
   function render() {
+    if (!ov.isConnected) return; // a queued auto-advance timer may fire after teardown
     const s = steps[idx];
     ov.innerHTML = `
       <button class="walk-close" aria-label="Close">✕</button>
@@ -411,6 +416,7 @@ function startWalkthrough(r) {
     clearTimeout(timer);
     if (!reduced && idx < steps.length - 1) timer = setTimeout(() => go(idx + 1), 3400);
   }
+  currentWalkClose = close;
   render();
 }
 
@@ -449,7 +455,7 @@ function closeDrawer() {
 }
 $('#scrim').addEventListener('click', closeDrawer);
 $('#drawer-close').addEventListener('click', closeDrawer);
-window.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeDrawer(); });
+window.addEventListener('keydown', (e) => { if (e.key === 'Escape') { if (currentWalkClose) currentWalkClose(); closeDrawer(); } });
 
 function renderDrawer() {
   const r = lastResult;
@@ -529,9 +535,9 @@ function assumeHTML(a) {
 
 // ============================================================================
 function reset() {
-  document.querySelector('.walk-overlay')?.remove();
+  if (currentWalkClose) currentWalkClose(); else document.querySelector('.walk-overlay')?.remove();
   try { window.speechSynthesis.cancel(); } catch {}
-  corpus = null; overrides = {}; lastResult = null;
+  corpus = null; cachedFacts = null; overrides = {}; lastResult = null;
   card.dataset.state = 'input';
   urlInput.value = ''; $('#analyze').disabled = true;
   $('#dropzone').classList.remove('valid');

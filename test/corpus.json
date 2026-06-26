@@ -1002,5 +1002,86 @@
       "6"
     ],
     "rationale": "Section 6 is the deciding rule. This is a deployed server-side PHP app (a PHP web process) that opens a live, persistent PDO connection (PDO::ATTR_PERSISTENT => true) to the PRODUCTION fund-admin database (host=dbprod, dbname=fundadmin). A server runtime plus a persistent live production data connection cannot run on the static shared host, so Section 6 forces Lane 2 on its own -- even though the logic is deterministic (Green) and benign. On the Section 5 audit it also fails 5.6: that condition requires no backend/own server runtime and a static-hostable shape, which a PHP server with a live DB link does not meet. The tier is REGISTER, not Approve: it is shared/relied on by staff (more than the builder), but it is strictly READ-ONLY -- the SELECT-only queries mean there is NO write to a system of record (5.3 is satisfied for the write test), it produces no relied-on client deliverable, and there is no probabilistic/AI output, so none of the three Approve gates (authoritative write, deliverable, unreviewed probabilistic) fire. Key trap for the classifier: read-only + deterministic + no AI + no outbound is NOT enough for Lane 1 -- the persistent server-side connection to a live production DB is itself the Lane 2 signal under Section 6. Tier is Register (Lane 2 / Isolated Hosting), not Approve."
+  },
+  {
+    "id": "ACC-PROXY-CLOAK-01",
+    "title": "Approved /api/chat proxy co-located with a host-obfuscated direct vendor AI call (Lane 2)",
+    "description": "A tool that legitimately uses the enterprise /api/chat proxy for one feature AND, in a separate module, makes a host-obfuscated direct OpenAI call (host assembled as 'op'+'enai', endpoint in a variable, full chat-completions payload). The direct call is detectable only by the AI payload fingerprint; the proxy must not cloak it.",
+    "files": [
+      {
+        "path": "chat.js",
+        "snippet": "// approved enterprise proxy — fine on its own\nasync function tidy(notes){\n  const r = await fetch('/api/chat', { method:'POST', body: JSON.stringify({ prompt: notes }) });\n  return (await r.json()).reply;\n}"
+      },
+      {
+        "path": "embed.js",
+        "snippet": "// host + SDK obfuscated so no literal vendor host/SDK appears\nconst HOST = 'op' + 'enai';\nconst ENDPOINT = 'https://api.' + HOST + '.com/v1/chat/completions';\nexport async function classify(text){\n  const res = await fetch(ENDPOINT, {\n    method:'POST',\n    headers:{ 'Content-Type':'application/json' },\n    body: JSON.stringify({ model:'gpt-4o-mini', messages:[{ role:'user', content: text }] })\n  });\n  return (await res.json()).choices[0].message.content;\n}"
+      }
+    ],
+    "expectedLane": "Lane 2",
+    "expectedTier": "Use",
+    "expectedFailingConditions": [
+      "5.5"
+    ],
+    "rationale": "Section 5.5 permits a runtime AI call only through the approved same-origin enterprise proxy. Here the /api/chat call qualifies, but embed.js makes a SECOND, genuinely direct vendor call whose host and SDK are obfuscated so the literal-host and SDK detectors miss it; only the AI payload fingerprint (model + chat messages) catches it. The proxy veto must be co-scoped: a proxy call in chat.js cannot license a direct call in embed.js. embed.js carries an AI payload AND a non-/api network call (fetch to a variable endpoint), so it is a direct AI call and fails 5.5 -> Lane 2. Regression guard for the proxy-cloak evasion."
+  },
+  {
+    "id": "ACC-PROXY-CONFIG-02",
+    "title": "Legit /api/chat proxy app that also reads a same-origin config via a variable URL (stays Lane 1)",
+    "description": "The positive control for the co-scoped proxy fix: a tool that routes its AI through the approved /api/chat proxy on general data AND, in a separate module, does a benign config fetch to a variable URL. The benign non-proxy fetch must NOT be mistaken for a direct AI destination and must not over-escalate.",
+    "files": [
+      {
+        "path": "app.js",
+        "snippet": "// AI goes only to the approved proxy; user reviews every result\nasync function tidy(notes){\n  const res = await fetch('/api/chat', { method:'POST', body: JSON.stringify({ messages:[{ role:'user', content: notes }] }) });\n  const d = await res.json();\n  document.querySelector('#out').textContent = d.reply; // eyeballed before reuse\n}"
+      },
+      {
+        "path": "config.js",
+        "snippet": "// benign settings load — variable URL, no AI payload here\nexport async function loadCfg(){\n  const r = await fetch(window.cfgUrl);\n  return r.json();\n}"
+      }
+    ],
+    "expectedLane": "Lane 1",
+    "expectedTier": "Use",
+    "expectedFailingConditions": [],
+    "rationale": "The only AI payload (messages) lives in app.js and goes to the approved /api/chat proxy, so 5.5 passes via the named exception. config.js makes a non-proxy fetch but carries no AI payload, so it is not a direct AI destination — the co-scoped proxy fix must not treat an unrelated config fetch as an AI call. General data, no writes, no restricted scope, output reviewed -> every 5.x condition holds -> Lane 1. This guards against the co-scoped fix over-escalating legitimate proxy apps."
+  },
+  {
+    "id": "ACC-CROWDOUT-DBWRITE-03",
+    "title": "Real ORM write hidden behind six benign builder/UI .create()/.save() calls (Lane 2)",
+    "description": "Six benign front-end components each call list.create()/store.save()/items.update() — broad matches that previously filled the db-write signal's 6-slot evidence cap and stopped the scan before the seventh file (a genuine prisma write) was ever examined. The engine must grep the precise write regex over the full corpus, not the capped evidence.",
+    "files": [
+      {
+        "path": "comp1.jsx",
+        "snippet": "export default function C(){ const x = list.create(); store.save(); items.update(); return null; }"
+      },
+      {
+        "path": "comp2.jsx",
+        "snippet": "export default function C(){ const x = list.create(); store.save(); items.update(); return null; }"
+      },
+      {
+        "path": "comp3.jsx",
+        "snippet": "export default function C(){ const x = list.create(); store.save(); items.update(); return null; }"
+      },
+      {
+        "path": "comp4.jsx",
+        "snippet": "export default function C(){ const x = list.create(); store.save(); items.update(); return null; }"
+      },
+      {
+        "path": "comp5.jsx",
+        "snippet": "export default function C(){ const x = list.create(); store.save(); items.update(); return null; }"
+      },
+      {
+        "path": "comp6.jsx",
+        "snippet": "export default function C(){ const x = list.create(); store.save(); items.update(); return null; }"
+      },
+      {
+        "path": "db.js",
+        "snippet": "import { prisma } from './client';\nexport async function persist(amount){\n  await prisma.records.create({ data: { amount } });\n}"
+      }
+    ],
+    "expectedLane": "Lane 2",
+    "expectedTier": "Approve",
+    "expectedFailingConditions": [
+      "5.3"
+    ],
+    "rationale": "db.js performs a real ORM write (prisma.records.create) — a write to a system of record (5.3) that auto-defaults the write target to authoritative, an Approve-state trigger. The six benign components only call generic builder methods (.create()/.save()/.update()) that are deliberately excluded by the tightened DB_ORM_WRITE regex. The bug class this guards: those benign matches fill the broad db-write signal's 6-slot evidence cap and break the per-file scan loop, so the genuine prisma write in the seventh file is never recorded; testing the precise regex over capped evidence then misses it (false Lane 1). Grepping the full comment-stripped corpus fixes it -> Lane 2."
   }
 ]

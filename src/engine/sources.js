@@ -131,35 +131,57 @@ export async function loadFromGitHub(input, token, onProgress = () => {}) {
   let blobs = (tree.tree || []).filter((n) => n.type === 'blob');
   if (subdir) blobs = blobs.filter((n) => n.path.startsWith(subdir + '/') || n.path === subdir);
 
-  const candidates = blobs
-    .filter((n) => !isIgnored(n.path) && isTextual(n.path) && (n.size || 0) <= MAX_FILE_BYTES)
-    .sort((a, b) => signalRank(b.path) - signalRank(a.path))
-    .slice(0, MAX_FILES);
+  // Require a known, in-bounds byte size (drops symlink/submodule edge nodes that could
+  // otherwise trigger an unbounded fetch). Rank each surviving path ONCE (not inside the
+  // sort comparator, which would re-evaluate ~10 regexes O(n log n) times).
+  const textual = blobs.filter((n) => !isIgnored(n.path) && isTextual(n.path) && typeof n.size === 'number' && n.size <= MAX_FILE_BYTES);
+  const candidates = textual
+    .map((n) => ({ n, rank: signalRank(n.path) }))
+    .sort((a, b) => b.rank - a.rank)
+    .slice(0, MAX_FILES)
+    .map((x) => x.n);
 
+  // Fetch raw file bodies with bounded concurrency (browsers allow ~6 connections/host),
+  // rather than one blocking round-trip at a time. Results are stored by index so the
+  // surviving file SET and ORDER stay identical to the old sequential walk.
+  let truncatedCount = Math.max(0, textual.length - MAX_FILES);
+  const CONCURRENCY = 6;
+  const results = new Array(candidates.length);
+  let nextIdx = 0, done = 0;
+  async function worker() {
+    for (let i = nextIdx++; i < candidates.length; i = nextIdx++) {
+      const node = candidates[i];
+      try {
+        const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${encodeURIComponent(branch)}/${node.path.split('/').map(encodeURIComponent).join('/')}`;
+        const res = await fetch(rawUrl);
+        if (res.ok) {
+          let text = await res.text();
+          let truncated = false;
+          if (text.length > MAX_FILE_BYTES) { text = text.slice(0, MAX_FILE_BYTES); truncated = true; }
+          results[i] = { path: node.path, text, bytes: node.size || text.length, truncated };
+        }
+      } catch { /* skip unreadable file */ }
+      onProgress(`Reading files… ${++done}/${candidates.length}`);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, candidates.length) }, worker));
+
+  // Assemble in priority order under the same per-corpus byte budget; count anything
+  // dropped (failed fetch or over budget) so the note stays honest.
   const files = [];
   let total = 0;
-  let truncatedCount = blobs.length - candidates.length;
-  for (let i = 0; i < candidates.length; i++) {
-    const node = candidates[i];
-    if (total >= MAX_TOTAL_BYTES) {
-      truncatedCount += candidates.length - i;
-      break;
-    }
-    onProgress(`Reading files… ${i + 1}/${candidates.length}`);
-    try {
-      const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${encodeURIComponent(branch)}/${node.path.split('/').map(encodeURIComponent).join('/')}`;
-      const res = await fetch(rawUrl);
-      if (!res.ok) continue;
-      let text = await res.text();
-      let truncated = false;
-      if (text.length > MAX_FILE_BYTES) { text = text.slice(0, MAX_FILE_BYTES); truncated = true; }
-      total += text.length;
-      files.push({ path: node.path, text, bytes: node.size || text.length, truncated });
-    } catch { /* skip unreadable file */ }
+  for (let i = 0; i < results.length; i++) {
+    const r = results[i];
+    if (!r) { truncatedCount++; continue; }
+    if (total >= MAX_TOTAL_BYTES) { truncatedCount += results.slice(i).filter(Boolean).length; break; }
+    total += r.text.length;
+    files.push(r);
   }
 
   const notes = [];
-  if (truncatedCount > 0) notes.push(`${truncatedCount} additional/large/binary file(s) were not read.`);
+  if (truncatedCount > 0) notes.push(`${truncatedCount} more code file(s) were not read (file/size limit or a failed fetch).`);
+  const nonCode = blobs.length - textual.length;
+  if (nonCode > 0) notes.push(`${nonCode} non-code file(s) were skipped.`);
 
   return normalizeCorpus(files, {
     source: 'github',
@@ -180,7 +202,8 @@ export async function loadFromGitHub(input, token, onProgress = () => {}) {
 // ---------------------------------------------------------------------------
 
 async function readFileAsText(file) {
-  // Skip obviously-binary or oversized files quickly.
+  // Cap oversized files so one huge blob can't blow the time/memory budget. (Binary files
+  // are already excluded upstream by the isTextual extension allowlist.)
   if (file.size > MAX_FILE_BYTES) {
     const slice = await file.slice(0, MAX_FILE_BYTES).text();
     return { text: slice, truncated: true };
@@ -193,7 +216,8 @@ export async function loadFromFileList(fileList, onProgress = () => {}) {
   const candidates = all
     .map((f) => ({ f, path: (f.webkitRelativePath || f.name).replace(/\\/g, '/') }))
     .filter(({ path }) => !isIgnored(path) && isTextual(path))
-    .sort((a, b) => signalRank(b.path) - signalRank(a.path))
+    .map((x) => ({ ...x, rank: signalRank(x.path) }))
+    .sort((a, b) => b.rank - a.rank)
     .slice(0, MAX_FILES);
 
   const files = [];
@@ -236,7 +260,8 @@ export async function loadFromZip(file, onProgress = () => {}) {
   const candidates = entries
     .map((e) => ({ e, path: e.name.replace(/\\/g, '/') }))
     .filter(({ path }) => !isIgnored(path) && isTextual(path))
-    .sort((a, b) => signalRank(b.path) - signalRank(a.path))
+    .map((x) => ({ ...x, rank: signalRank(x.path) }))
+    .sort((a, b) => b.rank - a.rank)
     .slice(0, MAX_FILES);
 
   const files = [];
@@ -273,13 +298,14 @@ export async function loadFromZip(file, onProgress = () => {}) {
 // ---------------------------------------------------------------------------
 
 export function loadFromPaste(text, filename = 'pasted-snippet') {
-  const guessHtml = /<!doctype html|<html|<script|<\/div>/i.test(text);
-  const guessPy = /^\s*(import |from .+ import|def |class )/m.test(text);
+  const t = String(text || ''); // coerce once, then use everywhere (no .length off a raw null)
+  const guessHtml = /<!doctype html|<html|<script|<\/div>/i.test(t);
+  const guessPy = /^\s*(import |from .+ import|def |class )/m.test(t);
   const path = /\.\w+$/.test(filename)
     ? filename
     : `${filename}.${guessHtml ? 'html' : guessPy ? 'py' : 'js'}`;
   return normalizeCorpus(
-    [{ path, text: String(text || ''), bytes: text.length, truncated: false }],
+    [{ path, text: t, bytes: t.length, truncated: false }],
     { source: 'paste', label: 'Pasted snippet', meta: {}, notes: [] },
   );
 }

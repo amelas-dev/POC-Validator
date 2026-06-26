@@ -95,11 +95,15 @@ export function stripComments(path, text) {
   return out.join('');
 }
 
-// Precompute line-start offsets so a match index -> 1-based line number is O(log n).
+// Map a match index -> 1-based line number in O(log n). The line-start table is built
+// lazily on first use, so files that produce zero matches never pay for it.
 function lineIndexer(text) {
-  const starts = [0];
-  for (let i = 0; i < text.length; i++) if (text[i] === '\n') starts.push(i + 1);
+  let starts = null;
   return (idx) => {
+    if (!starts) {
+      starts = [0];
+      for (let i = 0; i < text.length; i++) if (text[i] === '\n') starts.push(i + 1);
+    }
     let lo = 0, hi = starts.length - 1;
     while (lo < hi) {
       const mid = (lo + hi + 1) >> 1;
@@ -123,20 +127,20 @@ function snippetAround(text, idx, matchLen) {
   return line;
 }
 
-// Is a package-name match inside a manifest actually a runtime dependency?
-// (Used to avoid flagging an SDK that only appears under devDependencies.)
-function isRuntimeManifestMatch(path, text, idx) {
-  if (!/package\.json$/i.test(path)) return true; // only special-case package.json
+// Compute the {start,end} character span of a package.json's "devDependencies" object
+// ONCE per file. Returns null when there is no such span (not a manifest, no devDeps, or
+// malformed) — i.e. when every match should count as a runtime dependency.
+function devDepsRange(path, text) {
+  if (!/package\.json$/i.test(path)) return null;
   const dev = text.search(/"devDependencies"\s*:/);
-  if (dev === -1) return true;
-  // Find the extent of the devDependencies object and see if idx falls inside it.
+  if (dev === -1) return null;
   let depth = 0, start = text.indexOf('{', dev), end = -1;
+  if (start === -1) return null;
   for (let i = start; i < text.length; i++) {
     if (text[i] === '{') depth++;
     else if (text[i] === '}') { depth--; if (depth === 0) { end = i; break; } }
   }
-  if (start !== -1 && end !== -1 && idx > start && idx < end) return false; // dev-only
-  return true;
+  return end === -1 ? null : { start, end };
 }
 
 /**
@@ -149,7 +153,7 @@ export function scanCorpus(corpus) {
   // text (for matching), and a line indexer.
   const prepared = files.map((file) => {
     const text = file.text || '';
-    return { path: file.path, role: fileRole(file.path), text, stripped: stripComments(file.path, text), toLine: lineIndexer(text) };
+    return { path: file.path, role: fileRole(file.path), text, stripped: stripComments(file.path, text), toLine: lineIndexer(text), devRange: devDepsRange(file.path, text) };
   });
   const results = {};
 
@@ -157,7 +161,7 @@ export function scanCorpus(corpus) {
     const evidence = [];
     for (const f of prepared) {
       if (evidence.length >= MAX_EVIDENCE_PER_SIGNAL) break;
-      const { path, role, text, stripped, toLine } = f;
+      const { path, role, text, stripped, toLine, devRange } = f;
 
       for (let ri = 0; ri < regexes.length; ri++) {
         const re = regexes[ri];
@@ -173,7 +177,7 @@ export function scanCorpus(corpus) {
         // Match against comment-stripped text so matches inside comments don't count.
         while ((m = re.exec(stripped)) !== null && perPattern < MAX_MATCHES_PER_PATTERN_PER_FILE) {
           const idx = m.index;
-          const runtimeOk = role === 'manifest' ? isRuntimeManifestMatch(path, text, idx) : (role !== 'doc' && role !== 'test');
+          const runtimeOk = role === 'manifest' ? !(devRange && idx > devRange.start && idx < devRange.end) : (role !== 'doc' && role !== 'test');
           evidence.push({
             path,
             line: toLine(idx),
@@ -204,7 +208,9 @@ export function scanCorpus(corpus) {
     };
   }
 
-  return { signals: results, fileCount: files.length };
+  // Expose the prepared per-file data (role + comment-stripped text) so classify.js can
+  // reuse it instead of recomputing fileRole and re-running stripComments on every file.
+  return { signals: results, fileCount: files.length, files: prepared };
 }
 
 export { fileRole };

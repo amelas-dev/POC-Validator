@@ -11,7 +11,7 @@ export const SIGNALS = [
     mapsTo: "5.5",
     effect: "fails-lane1-condition",
     confidence: "strong",
-    patterns: ["api\\.anthropic\\.com", "api\\.openai\\.com", "[a-z0-9-]+\\.openai\\.azure\\.com", "openai\\.azure\\.com", "generativelanguage\\.googleapis\\.com", "api\\.cohere\\.(ai|com)", "api\\.mistral\\.ai", "api\\.groq\\.com", "api-inference\\.huggingface\\.co", "api\\.replicate\\.com", "bedrock(-runtime)?\\.[a-z0-9-]+\\.amazonaws\\.com", "baseURL\\s*[:=]\\s*['\"`]https?://"],
+    patterns: ["api\\.anthropic\\.com", "api\\.openai\\.com", "openai\\.azure\\.com", "generativelanguage\\.googleapis\\.com", "api\\.cohere\\.(ai|com)", "api\\.mistral\\.ai", "api\\.groq\\.com", "api-inference\\.huggingface\\.co", "api\\.replicate\\.com", "bedrock(-runtime)?\\.[a-z0-9-]+\\.amazonaws\\.com", "baseURL\\s*[:=]\\s*['\"`]https?://"],
   },
   {
     id: "runtime-ai-vendor-sdk-import",
@@ -65,7 +65,7 @@ export const SIGNALS = [
     mapsTo: "5.3",
     effect: "fails-lane1-condition",
     confidence: "moderate",
-    patterns: ["@supabase/supabase-js", "supabase\\.from\\([^)]*\\)\\.(insert|update|upsert|delete)", "firebase|getFirestore|@google-cloud/firestore", "@aws-sdk/client-dynamodb|@aws-sdk/client-s3|@azure/cosmos", "airtable", "graph\\.microsoft\\.com/v1\\.0/.*/items", "[a-z0-9-]+\\.salesforce\\.com/services|/services/data/", "api\\.hubapi\\.com", "api\\.atlassian\\.com|/rest/api/3/issue", "quickbooks\\.api\\.intuit\\.com", "slack\\.com/api/(chat\\.postMessage|files\\.upload)", "docusign|esignature"],
+    patterns: ["@supabase/supabase-js", "supabase\\.from\\([^)]*\\)\\.(insert|update|upsert|delete)", "firebase|getFirestore|@google-cloud/firestore", "@aws-sdk/client-dynamodb|@aws-sdk/client-s3|@azure/cosmos", "airtable", "graph\\.microsoft\\.com/v1\\.0/.*/items", "salesforce\\.com/services|/services/data/", "api\\.hubapi\\.com", "api\\.atlassian\\.com|/rest/api/3/issue", "quickbooks\\.api\\.intuit\\.com", "slack\\.com/api/(chat\\.postMessage|files\\.upload)", "docusign|esignature"],
   },
   {
     id: "third-party-cdn-script",

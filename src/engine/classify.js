@@ -11,7 +11,7 @@
 // signals (a direct AI call, a third-party script, a server runtime) decide
 // on their own.
 
-import { scanCorpus, stripComments, fileRole } from './scan.js';
+import { scanCorpus } from './scan.js';
 
 // Re-derived, tightened detectors for the dimensions that need calibration so
 // a weak keyword can't over-escalate a benign utility.
@@ -68,6 +68,10 @@ const VENDOR_HOST = /(api\.(anthropic|openai|cohere|mistral|groq)\.|[a-z0-9-]+\.
 // so the keys may be quoted and the separator may be `:` or `=`.
 const AI_PAYLOAD = /\bmessages\b["'`]?\s*[:=]\s*\[\s*\{[^]*?\brole\b["'`]?\s*[:=]\s*['"`](system|user|assistant)['"`][^]*?\bcontent\b/i;
 const AI_MODEL = /\bmodel\b["'`]?\s*[:=]\s*['"`](gpt-|claude-|gemini|mistral|llama|text-embedding|text-davinci|chat-bison|o[134]-)/i;
+// A network/import call that is NOT the approved same-origin /api proxy. Used to tell a
+// genuine (host-obfuscated) direct AI call from a payload that merely rides the proxy.
+const NON_PROXY_AI_CALL = /(\bfetch\s*\(|\baxios\b|XMLHttpRequest|new\s+WebSocket|\bimport\s*\()/i;
+const PROXY_DEST = /['"`]\/api\//;
 // A real client deliverable means an actual document-generation LIBRARY produced
 // an artifact — not just a function NAMED generateReport / exportToPdf (reliance
 // is un-inferable; a name must not auto-escalate to Approve).
@@ -177,12 +181,14 @@ function decide(f, ua = {}) {
   return { verdictKey, tier, posture, dataScope, reliance, writeAuthority, humanReview, reliedProbabilistic, authoritativeWrite, pass, autoDataScope, autoReliance, autoWriteAuthority };
 }
 
-export function analyze(corpus, assumptions = {}) {
+// Derive every fact that depends ONLY on the code — never on user assumptions. This is
+// the expensive half (scan + greps + detectors); the UI caches it per corpus so what-if
+// toggles re-run only the cheap resolve() below instead of re-scanning every file.
+export function extractFacts(corpus) {
   const scan = scanCorpus(corpus);
   const S = scan.signals;
-  const files = (corpus && corpus.files) || [];
-  // Comment-stripped copies so grep-based facts also ignore commented-out code.
-  const cleanFiles = files.map((f) => ({ path: f.path, clean: stripComments(f.path, f.text || '') }));
+  // Reuse the comment-stripped text the scanner already produced — no second strip pass.
+  const cleanFiles = scan.files.map((p) => ({ path: p.path, clean: p.stripped }));
   const grep = (re) => cleanFiles.some((f) => re.test(f.clean));
   const fired = (id) => !!(S[id] && S[id].firedRuntime);
   const entry = (id) => S[id];
@@ -207,9 +213,9 @@ export function analyze(corpus, assumptions = {}) {
   // A file named *.spec.js / *.test.js is treated as a test (its AI calls don't
   // count) — UNLESS runtime code actually imports it, in which case it ships.
   const importedNames = new Set();
-  for (const f of cleanFiles) {
-    if (fileRole(f.path) === 'test') continue;
-    for (const m of f.clean.matchAll(/(?:from|require\(|import\()\s*['"]([^'"]+)['"]/g)) {
+  for (const p of scan.files) {
+    if (p.role === 'test') continue;
+    for (const m of p.stripped.matchAll(/(?:from|require\(|import\()\s*['"]([^'"]+)['"]/g)) {
       importedNames.add(m[1].split('/').pop().replace(/\.(m?[jt]sx?)$/, ''));
     }
   }
@@ -227,7 +233,12 @@ export function analyze(corpus, assumptions = {}) {
   // An LLM payload (model + chat messages) that is NOT going to the approved
   // same-origin proxy is a direct AI call, however the host/SDK were hidden.
   const proxyPresent = !!(entry('approved-enterprise-proxy') && entry('approved-enterprise-proxy').fired);
-  const aiPayload = (grep(AI_PAYLOAD) || grep(AI_MODEL)) && !proxyPresent;
+  // The proxy only licenses an AI call co-located with it. A separate, host-obfuscated
+  // call that makes its own non-/api network/import request is still direct, so a proxy
+  // elsewhere in the corpus must not cloak it (the §5.5 evasion the old global veto missed).
+  const directAiDest = cleanFiles.some((f) =>
+    (AI_PAYLOAD.test(f.clean) || AI_MODEL.test(f.clean)) && NON_PROXY_AI_CALL.test(f.clean) && !PROXY_DEST.test(f.clean));
+  const aiPayload = (grep(AI_PAYLOAD) || grep(AI_MODEL)) && (!proxyPresent || directAiDest);
   const directAI = directHost || sdkImport || clientKey || aiPayload;
   const proxyAI = proxyPresent && !directAI;
   const localML = fired('logic-probabilistic-ml-inference');
@@ -237,7 +248,10 @@ export function analyze(corpus, assumptions = {}) {
   // A write to a system of record: DB/ORM/SQL or BaaS, a mutating call to an
   // external host, a same-origin POST to a write-y path, an ORM-chain write, a Go
   // (gorm/http) write, or a save to a network share — NOT a POST to /api/chat.
-  const dbOrmWrite = (entry('db-source-of-truth-write')?.evidence || []).some((e) => DB_ORM_WRITE.test(e.text));
+  // grep the precise write regex over the full comment-stripped corpus, NOT the signal's
+  // 6-slot-capped evidence — broad benign matches (.save()/.create()) in earlier files
+  // could otherwise crowd out a genuine INSERT/prisma write in a later file (false Lane 1).
+  const dbOrmWrite = grep(DB_ORM_WRITE);
   const dbWrite = dbOrmWrite || fired('backend-as-a-service-write')
     || grep(MUTATING_EXTERNAL) || grep(METHOD_WRITE) || grep(MUTATING_FETCH_EXTERNAL)
     || grep(RELATIVE_POST_WRITE) || grep(XHR_MUTATE_EXTERNAL) || grep(SHARED_PATH_WRITE)
@@ -245,7 +259,9 @@ export function analyze(corpus, assumptions = {}) {
   const cdnScript = fired('third-party-cdn-script') || fired('third-party-analytics-telemetry');
   const outbound = fired('outbound-network-call-nonallowlisted');
   const persistence = fired('client-persistence-sensitive');
-  const publicAuth = anyEvidenceMatches(entry('sso-gating-posture'), PUBLIC_AUTH);
+  // grep over full corpus, not capped evidence — benign SSO mentions (msal/oidc/saml)
+  // must not crowd out an explicit allowAnonymous/public-auth flag in a later file.
+  const publicAuth = grep(PUBLIC_AUTH);
 
   // ---- Logic posture (STAR §3.2) ------------------------------------------
   const extraction = fired('logic-probabilistic-extraction-parsing') || grep(EXTRACTION_EXTRA);
@@ -262,8 +278,10 @@ export function analyze(corpus, assumptions = {}) {
 
   // ---- Dimensions code cannot prove -> auto-defaults, user-overridable -----
   const restrictedStrong = detectRestricted(cleanFiles);
-  const relianceExport = anyEvidenceMatches(entry('reliance-deliverable-markers'), STRONG_RELIANCE_EXPORT);
-  const relianceShare = anyEvidenceMatches(entry('reliance-shared-repeatable-register'), STRONG_RELIANCE_SHARE);
+  // grep over full corpus, not capped evidence — benign generate*Report NAMES must not
+  // crowd out a genuine doc-gen library import (jspdf/exceljs…) that escalates to Approve.
+  const relianceExport = grep(STRONG_RELIANCE_EXPORT);
+  const relianceShare = grep(STRONG_RELIANCE_SHARE);
 
   // Bundle the code-derived facts and let the pure resolver do STEP 1 + STEP 2.
   const facts = {
@@ -271,6 +289,57 @@ export function analyze(corpus, assumptions = {}) {
     extraction, qa, drafting, deterministic, probabilistic, silentBatch,
     restrictedStrong, relianceExport, relianceShare,
   };
+
+  // ---- Pattern classification (informational "Looks like…") — code-only -----
+  let pattern = 'Utility';
+  if (qa) pattern = 'Document Q&A / retrieval';
+  else if (extraction) pattern = 'Extraction / parsing';
+  else if (drafting || directAI || proxyAI) pattern = 'Drafting / summarizing';
+  else if (localML) pattern = 'ML scoring / inference';
+  else if (dbWrite || backend) pattern = 'Data entry / integration';
+  else if (anyEvidenceMatches(entry('logic-deterministic-green'), /intl\.numberformat|tolocalestring|tofixed|date-fns|dayjs|\bformat\b/i) || fired('numeric-mutation-downstream')) pattern = 'Data formatting';
+  else if (anyEvidenceMatches(entry('logic-deterministic-green'), /\bvalidate\w*\b|\bzod\b|\byup\b|\bjoi\b|\.test\(/i)) pattern = 'Data validation';
+  else if (deterministic) pattern = 'Data entry / formatting';
+
+  const buildTool = entry('build-tool-ai-attribution') && entry('build-tool-ai-attribution').fired
+    ? (entry('build-tool-ai-attribution').evidence[0]?.text || 'AI-assisted build') : null;
+
+  // ---- Confidence base: how well could the engine see the code? The single-
+  // snippet adjustment depends on the verdict, so it is applied later in resolve().
+  const runtimeFiles = scan.files.filter((p) => p.role === 'runtime');
+  const minifiedRuntime = runtimeFiles.filter((p) => isMinified(p.text || ''));
+  const sawSource = runtimeFiles.some((p) => !isMinified(p.text || ''));
+  const confReasons = [];
+  let confLevel = 'high';
+  if (runtimeFiles.length && !sawSource) {
+    confLevel = 'low';
+    confReasons.push('Only minified/built code was available — not the original source, so some calls may be hidden.');
+  } else if (!runtimeFiles.length) {
+    confLevel = 'low';
+    confReasons.push('No source files were read — this is based on docs and config only.');
+  } else if (minifiedRuntime.length) {
+    confLevel = 'medium';
+    confReasons.push('Some files are minified, so a few signals could be hidden.');
+  }
+
+  return {
+    facts, evOf, pattern, buildTool,
+    confBase: { level: confLevel, reasons: confReasons },
+    fileCount: scan.fileCount,
+    meta: {
+      label: (corpus && corpus.label) || 'POC',
+      source: (corpus && corpus.source) || 'upload',
+      repoMeta: (corpus && corpus.meta) || {},
+      notes: (corpus && corpus.notes) || [],
+    },
+  };
+}
+
+// Pure resolver: cached facts + user assumptions -> verdict, §5 rows, demotion hints,
+// certainty and confidence. Cheap and re-runnable on every what-if toggle (no re-scan).
+export function resolve(bundle, assumptions = {}) {
+  const { facts, evOf } = bundle;
+  const { directAI, proxyAI, localML, backend, dbWrite, cdnScript, outbound, persistence, publicAuth, probabilistic, silentBatch } = facts;
   const D = decide(facts, assumptions);
   const { tier, posture, dataScope, reliance, writeAuthority, humanReview, authoritativeWrite, reliedProbabilistic, pass } = D;
   const verdictKey = D.verdictKey;
@@ -434,25 +503,11 @@ export function analyze(corpus, assumptions = {}) {
     drivers.slice(0, 2).forEach((id) => { if (byId[id]) byId[id].driving = true; });
   }
 
-  // ---- Pattern classification (informational "Looks like…") ---------------
-  let pattern = 'Utility';
-  if (qa) pattern = 'Document Q&A / retrieval';
-  else if (extraction) pattern = 'Extraction / parsing';
-  else if (drafting || directAI || proxyAI) pattern = 'Drafting / summarizing';
-  else if (localML) pattern = 'ML scoring / inference';
-  else if (dbWrite || backend) pattern = 'Data entry / integration';
-  else if (anyEvidenceMatches(entry('logic-deterministic-green'), /intl\.numberformat|tolocalestring|tofixed|date-fns|dayjs|\bformat\b/i) || fired('numeric-mutation-downstream')) pattern = 'Data formatting';
-  else if (anyEvidenceMatches(entry('logic-deterministic-green'), /\bvalidate\w*\b|\bzod\b|\byup\b|\bjoi\b|\.test\(/i)) pattern = 'Data validation';
-  else if (deterministic) pattern = 'Data entry / formatting';
-
   // ---- Unknowns the analyzer surfaced for confirmation --------------------
   const unknowns = [];
   if (!used.overridden.dataScope) unknowns.push({ dim: 'data scope', value: dataScope, why: 'Code can’t prove whether data is Client/Fund/Restricted.' });
   if (!used.overridden.reliance) unknowns.push({ dim: 'who relies on it', value: reliance, why: 'Code can’t see who depends on the output.' });
   if (dbWrite && !used.overridden.writeAuthority) unknowns.push({ dim: 'write target', value: writeAuthority, why: 'Code can’t tell a system of record from a scratch store.' });
-
-  const buildTool = entry('build-tool-ai-attribution') && entry('build-tool-ai-attribution').fired
-    ? (entry('build-tool-ai-attribution').evidence[0]?.text || 'AI-assisted build') : null;
 
   // ---- "What would make it lighter" — each demotion with the lane it WOULD
   // become, computed by re-running the resolver with that one change applied
@@ -476,23 +531,11 @@ export function analyze(corpus, assumptions = {}) {
   const assumed = conditions.filter((cc) => cc.assumption && !used.overridden[cc.assumption.kind]);
   const certainty = { proven: conditions.length - assumed.length, assumed: assumed.length, assumedIds: assumed.map((cc) => cc.id) };
 
-  // ---- Confidence: how well could the engine actually see the code? --------
-  const runtimeFiles = files.filter((f) => fileRole(f.path) === 'runtime');
-  const minifiedRuntime = runtimeFiles.filter((f) => isMinified(f.text || ''));
-  const sawSource = runtimeFiles.some((f) => !isMinified(f.text || ''));
-  const confReasons = [];
-  let confLevel = 'high';
-  if (runtimeFiles.length && !sawSource) {
-    confLevel = 'low';
-    confReasons.push('Only minified/built code was available — not the original source, so some calls may be hidden.');
-  } else if (!runtimeFiles.length) {
-    confLevel = 'low';
-    confReasons.push('No source files were read — this is based on docs and config only.');
-  } else if (minifiedRuntime.length) {
-    confLevel = 'medium';
-    confReasons.push('Some files are minified, so a few signals could be hidden.');
-  }
-  if (confLevel !== 'low' && files.length <= 1 && verdictKey !== 'lane1') {
+  // ---- Confidence: cached base + the single-snippet adjustment, which depends on
+  // the verdict. Copy the cached reasons so the bundle stays reusable across toggles.
+  let confLevel = bundle.confBase.level;
+  const confReasons = bundle.confBase.reasons.slice();
+  if (confLevel !== 'low' && bundle.fileCount <= 1 && verdictKey !== 'lane1') {
     confLevel = confLevel === 'high' ? 'medium' : confLevel;
     confReasons.push('Based on a single small snippet — drop in the whole project for a firmer read.');
   }
@@ -502,20 +545,26 @@ export function analyze(corpus, assumptions = {}) {
     verdict: VERDICTS[verdictKey],
     tier,
     posture,
-    pattern,
+    pattern: bundle.pattern,
     conditions,
     assumptions: used,
     unknowns,
     lighten,
     certainty,
     confidence,
-    buildTool,
+    buildTool: bundle.buildTool,
     meta: {
-      label: (corpus && corpus.label) || 'POC',
-      source: (corpus && corpus.source) || 'upload',
-      fileCount: scan.fileCount,
-      repoMeta: (corpus && corpus.meta) || {},
-      notes: (corpus && corpus.notes) || [],
+      label: bundle.meta.label,
+      source: bundle.meta.source,
+      fileCount: bundle.fileCount,
+      repoMeta: bundle.meta.repoMeta,
+      notes: bundle.meta.notes,
     },
   };
+}
+
+// Convenience: extract + resolve in one call (used by tests and any non-interactive
+// caller). The interactive UI calls extractFacts once and resolve() per what-if toggle.
+export function analyze(corpus, assumptions = {}) {
+  return resolve(extractFacts(corpus), assumptions);
 }
