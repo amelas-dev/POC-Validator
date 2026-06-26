@@ -3,85 +3,147 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Lane</title>
+  <title>Lane — GPFS</title>
   <meta name="description" content="Paste your tool. See if it can go live." />
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='8' fill='%232E9E73'/%3E%3C/svg%3E" />
+  <!-- GPFS-orange mark: three ascending lanes -->
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23dc6e2c'/%3E%3Cg fill='%23fff'%3E%3Crect x='8' y='17' width='3.4' height='7' rx='1.5'/%3E%3Crect x='14.3' y='12' width='3.4' height='12' rx='1.5'/%3E%3Crect x='20.6' y='8' width='3.4' height='16' rx='1.5'/%3E%3C/g%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="assets/fonts/fonts.css" />
   <link rel="stylesheet" href="src/styles/app.css" />
 </head>
 <body>
-  <div class="wrap">
-    <div class="stage" id="card" data-state="input">
-      <svg class="edge-ring" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-        <rect x="0.75" y="0.75" width="98.5" height="98.5" rx="8" pathLength="1" vector-effect="non-scaling-stroke" />
-      </svg>
+  <a class="skip" href="#work">Skip to validator</a>
 
-      <header class="chrome">
-        <div class="wordmark">Lane</div>
-        <div class="org">GP Fund Solutions</div>
-      </header>
+  <div class="shell" id="shell" data-tool="validator" data-dock="closed">
 
-      <!-- INPUT -->
-      <section class="view view-input">
-        <p class="prompt">Paste a GitHub link, or drop your tool here — I’ll tell you if it can go live.</p>
+    <!-- ============ Region A · Activity rail ============ -->
+    <nav class="rail" aria-label="Tools">
+      <a class="brand" href="#work" aria-label="Lane — GP Fund Solutions">
+        <span class="brand-tile" aria-hidden="true">
+          <svg viewBox="0 0 32 32"><g fill="currentColor">
+            <rect x="8" y="17" width="3.4" height="7" rx="1.5"/>
+            <rect x="14.3" y="12" width="3.4" height="12" rx="1.5"/>
+            <rect x="20.6" y="8" width="3.4" height="16" rx="1.5"/>
+          </g></svg>
+        </span>
+      </a>
 
-        <div class="pill" id="dropzone">
-          <span class="valid-check" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M5 12.5l4.5 4.5L19 7"/></svg></span>
-          <input type="text" id="url" placeholder="github.com/org/repo" autocomplete="off" spellcheck="false" aria-label="GitHub repository link" />
-          <button class="go" id="analyze" disabled>Check it</button>
+      <div class="rail-tools" id="rail-tools" role="list"><!-- populated from the TOOLS registry --></div>
+
+      <div class="rail-foot">
+        <button class="rail-btn" id="settings-btn" type="button" aria-label="Settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 13.5a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0-1.2-2.9H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.2-2.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3 1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+          <span class="tip">Settings</span>
+        </button>
+        <span class="avatar" title="Alex Melas — GP Fund Solutions" aria-hidden="true">AM</span>
+      </div>
+    </nav>
+
+    <!-- ============ Region B · Tool header ============ -->
+    <header class="toolhead">
+      <div class="th-name" id="th-name">Validator</div>
+      <div class="th-actions">
+        <button class="th-pill" id="new-check" type="button" hidden>New check</button>
+        <button class="th-icon" id="opts-btn" type="button" aria-haspopup="true" aria-expanded="false" aria-label="Options">
+          <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>
+        </button>
+        <div class="opts-menu" id="opts-menu" role="menu" hidden>
+          <div class="opts-group" role="group" aria-label="Appearance">
+            <span class="opts-label">Appearance</span>
+            <div class="seg theme-seg" id="theme-seg">
+              <button role="menuitemradio" data-theme="auto" class="on">Auto</button>
+              <button role="menuitemradio" data-theme="light">Light</button>
+              <button role="menuitemradio" data-theme="dark">Dark</button>
+            </div>
+          </div>
         </div>
+      </div>
+      <div class="sweep" id="sweep" aria-hidden="true"></div>
+    </header>
 
-        <div class="aux">
-          <button class="linkish" id="try-example">try an example</button>
-          <span>·</span>
-          <button class="linkish" id="pick-files">choose a file</button>
+    <!-- ============ Region C · Main canvas ============ -->
+    <main class="main" id="work" role="main" tabindex="-1">
+      <div class="canvas" id="card" data-state="input">
+        <div class="measure">
+
+          <!-- INPUT -->
+          <section class="view view-input">
+            <p class="prompt">Paste your tool. See if it can go live.</p>
+
+            <div class="pill" id="dropzone">
+              <span class="valid-check" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M5 12.5l4.5 4.5L19 7"/></svg></span>
+              <input type="text" id="url" placeholder="github.com/org/repo" autocomplete="off" spellcheck="false" aria-label="GitHub repository link" />
+              <button class="pill-attach" id="pick-files" type="button" aria-label="Choose a file">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><path d="M21 12.5l-8.5 8.5a5 5 0 0 1-7-7L14 5.5a3.3 3.3 0 0 1 4.7 4.7L10 19a1.7 1.7 0 0 1-2.4-2.4l8-8"/></svg>
+              </button>
+              <button class="go" id="analyze" type="button" disabled>Check it</button>
+            </div>
+
+            <div class="aux">
+              <button class="linkish" id="try-example" type="button">try an example</button>
+            </div>
+
+            <div class="collapsible" id="token-row">
+              <input type="password" id="token" placeholder="GitHub access token, then press Check again" autocomplete="off" aria-label="GitHub personal access token" />
+              <p class="hint" id="token-hint">Only used to read a private repo or lift the public rate limit. Never stored.</p>
+            </div>
+
+            <div class="error" id="error" role="alert">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-top:1px"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>
+              <span id="error-text"></span>
+            </div>
+          </section>
+
+          <!-- ANALYZING -->
+          <section class="view view-analyzing">
+            <div class="pre-orb"></div>
+            <div class="phase" id="phase">Reading your tool…</div>
+          </section>
+
+          <!-- RESULT -->
+          <section class="view view-result" id="result"></section>
+
+          <input type="file" id="file-input" multiple hidden />
+          <input type="file" id="folder-input" webkitdirectory directory multiple hidden />
+          <input type="file" id="zip-input" accept=".zip" hidden />
         </div>
+      </div>
+      <div class="drop-hint" aria-hidden="true">Drop it — I’ve got it.</div>
+    </main>
 
-        <div class="collapsible" id="token-row">
-          <input type="password" id="token" placeholder="GitHub access token, then press Check again" autocomplete="off" aria-label="GitHub personal access token" />
-          <p class="hint" id="token-hint">Only used to read a private repo or lift the public rate limit. Never stored.</p>
-        </div>
+    <!-- ============ Region D · Audit dock ============ -->
+    <aside class="dock" id="dock" aria-labelledby="dock-title">
+      <button class="dock-handle" id="dock-toggle" type="button" aria-label="Collapse the full check" aria-expanded="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+      </button>
+      <div class="dock-head">
+        <h2 id="dock-title">The full check</h2>
+        <button class="x" id="drawer-close" type="button" aria-label="Close the full check">×</button>
+      </div>
+      <div class="dock-body" id="drawer-body"></div>
+      <div class="colophon-mini">
+        A quick read, not the final word — your AI Operations Lead makes the hosting call,
+        under the GPFS POC Triage &amp; Hosting Playbook.
+      </div>
+    </aside>
 
-        <div class="error" id="error">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-top:1px"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>
-          <span id="error-text"></span>
-        </div>
+    <!-- ============ Region E · Status footer ============ -->
+    <footer class="foot" role="contentinfo">
+      <div class="foot-l" id="foot-verdict" data-kind="privacy">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        Read-only · checked in your browser, never uploaded.
+      </div>
+      <div class="foot-c" id="foot-conf"></div>
+      <div class="foot-r">
+        Indication only — your AI Operations Lead makes the call
+        <span class="foot-sep">·</span>
+        <a class="foot-link" href="#" id="playbook-link">GPFS POC Triage</a>
+      </div>
+    </footer>
 
-        <div class="reassure">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-          Read-only. Your files are checked right here and never leave your browser.
-        </div>
-
-        <input type="file" id="file-input" multiple hidden />
-        <input type="file" id="folder-input" webkitdirectory directory multiple hidden />
-        <input type="file" id="zip-input" accept=".zip" hidden />
-      </section>
-
-      <!-- ANALYZING -->
-      <section class="view view-analyzing">
-        <div class="pre-orb"></div>
-        <div class="phase" id="phase">Reading your tool…</div>
-      </section>
-
-      <!-- RESULT -->
-      <section class="view view-result" id="result"></section>
-
-      <div class="drop-hint">Drop it — I’ve got it.</div>
-    </div>
   </div>
 
-  <!-- full-check drawer -->
+  <!-- scrim only used when the dock falls back to an overlay on narrow screens -->
   <div class="scrim" id="scrim"></div>
-  <aside class="drawer" id="drawer" aria-hidden="true">
-    <div class="drawer-head">
-      <h2>The full check</h2>
-      <button class="x" id="drawer-close" aria-label="Close">×</button>
-    </div>
-    <div class="drawer-body" id="drawer-body"></div>
-    <div class="colophon-mini">
-      A quick read, not the final word — your AI Operations Lead makes the hosting call,
-      under the GPFS POC Triage &amp; Hosting Playbook.
-    </div>
-  </aside>
 
   <script src="src/vendor/jszip.min.js"></script>
   <script type="module" src="src/app.js"></script>

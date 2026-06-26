@@ -8,8 +8,15 @@ import {
 } from './engine/sources.js';
 
 const $ = (s) => document.querySelector(s);
-const card = $('#card');
+const card = $('#card');       // the work canvas; data-state drives the view
+const shell = $('#shell');     // the app-shell grid (rail · header · main · dock · footer)
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+// Tiny namespaced localStorage helper — the persistence seam the toolkit grows on.
+const store = {
+  get(k, d) { try { const v = localStorage.getItem('lane.' + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem('lane.' + k, JSON.stringify(v)); } catch {} },
+};
 
 // ---- state ----------------------------------------------------------------
 let corpus = null;
@@ -17,6 +24,15 @@ let cachedFacts = null;   // assumption-independent facts; scanned once, reused 
 let overrides = {};
 let lastResult = null;
 let currentWalkClose = null;  // teardown handle for an active walkthrough overlay
+
+// State lives on the canvas (drives the views) and is mirrored to the shell
+// (drives the analyzing sweep, the New-check button, and the drop hint).
+function setState(s) {
+  card.dataset.state = s;
+  shell.dataset.state = s;
+  const nc = $('#new-check'); if (nc) nc.hidden = (s !== 'result');
+  $('#work')?.setAttribute('aria-busy', s === 'analyzing' ? 'true' : 'false');
+}
 
 // ---- plain-language vocabulary -------------------------------------------
 const OUTCOME = { lane1: 'ready', lane2: 'developer', approve: 'signoff' };
@@ -167,11 +183,11 @@ on('file-input', 'change', (e) => e.target.files.length && run(() => loadFromFil
 on('folder-input', 'change', (e) => e.target.files.length && run(() => loadFromFileList(e.target.files, setPhase)));
 on('zip-input', 'change', (e) => e.target.files[0] && run(() => loadFromZip(e.target.files[0], setPhase)));
 
-// drag anywhere over the card
-['dragenter', 'dragover'].forEach((ev) => window.addEventListener(ev, (e) => { e.preventDefault(); if (card.dataset.state === 'input') card.classList.add('lifting'); }));
-window.addEventListener('dragleave', (e) => { if (e.relatedTarget === null) card.classList.remove('lifting'); });
+// drag anywhere over the canvas
+['dragenter', 'dragover'].forEach((ev) => window.addEventListener(ev, (e) => { e.preventDefault(); if (card.dataset.state === 'input') shell.dataset.drag = 'on'; }));
+window.addEventListener('dragleave', (e) => { if (e.relatedTarget === null) shell.removeAttribute('data-drag'); });
 window.addEventListener('drop', async (e) => {
-  e.preventDefault(); card.classList.remove('lifting');
+  e.preventDefault(); shell.removeAttribute('data-drag');
   if (card.dataset.state !== 'input') return;
   const dt = e.dataTransfer;
   const items = dt.items ? Array.from(dt.items) : [];
@@ -204,7 +220,8 @@ function setPhase(msg) { const el = $('#phase'); if (el && msg) el.textContent =
 async function run(loader) {
   clearError();
   overrides = {};
-  card.dataset.state = 'analyzing';
+  setState('analyzing');
+  announce('Checking your tool…');
   let i = 0; setPhase(PHASES[0]);
   // Stop the generic rotation once it reaches the last phase so the loaders' granular
   // per-file progress ("Reading files… 7/40") can show through instead of being clobbered.
@@ -217,11 +234,11 @@ async function run(loader) {
     cachedFacts = extractFacts(corpus); // scan once; what-if toggles reuse this
     await dwell;
     clearInterval(timer);
-    const reveal = () => { renderResult(); card.dataset.state = 'result'; };
+    const reveal = () => { renderResult(); recordCheck(lastResult); setState('result'); };
     if (document.startViewTransition) document.startViewTransition(reveal); else reveal();
   } catch (err) {
     clearInterval(timer);
-    card.dataset.state = 'input';
+    setState('input');
     const m = String((err && err.message) || err);
     if (NEEDS_TOKEN.test(m)) $('#token-row').classList.add('open'); // reveal exactly when needed
     showError(friendly(m));
@@ -288,19 +305,18 @@ function renderResult() {
     ${lightenPill}
 
     <div class="action">
-      <button class="ghost" id="reset">Check another</button>
-      <div class="spacer"></div>
       <button class="ghost walk" id="walk"><span class="play">${ICONS.play}</span> Walk me through it</button>
+      <div class="spacer"></div>
       <button class="cta" id="cta">${esc(v.cta)}</button>
     </div>`;
 
   announce(`${v.headline} ${v.story}`);
+  updateFooter(r);
 
-  $('#reset').addEventListener('click', reset);
   $('#trust-line').addEventListener('click', openDrawer);
   $('#cta').addEventListener('click', () => copyHandoff(r, v));
   $('#walk').addEventListener('click', () => startWalkthrough(r));
-  const lb = $('#lighten-btn'); if (lb) lb.addEventListener('click', openDrawer);
+  const lb = $('#lighten-btn'); if (lb) lb.addEventListener('click', openLighten);
   $('#result').querySelectorAll('.show-where').forEach((b) => b.addEventListener('click', () => {
     const tile = b.closest('.tile');
     const open = tile.classList.contains('open');
@@ -381,29 +397,41 @@ function walkSteps(r) {
 
 function startWalkthrough(r) {
   const steps = walkSteps(r);
-  const reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   let idx = 0;
-  let voice = ('speechSynthesis' in window);
+  let voice = false;                          // default off — TTS only when asked (no surprise audio)
+  const trigger = document.activeElement;
+  const washed = document.querySelectorAll('.rail, .toolhead, .dock, .foot');
   const ov = document.createElement('div');
   ov.className = 'walk-overlay';
   ov.dataset.outcome = OUTCOME[r.verdict.key];
-  card.appendChild(ov);
-  let timer = null;
+  ov.setAttribute('role', 'dialog');
+  ov.setAttribute('aria-modal', 'true');
+  ov.setAttribute('aria-label', 'Walk me through it');
+  $('#work').appendChild(ov);
+  shell.dataset.walk = 'on';
+  washed.forEach((el) => el.setAttribute('inert', ''));
   const stopSpeak = () => { try { window.speechSynthesis.cancel(); } catch {} };
   const speak = (t) => { if (!voice || !('speechSynthesis' in window)) return; try { window.speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(t); u.rate = 1.03; window.speechSynthesis.speak(u); } catch {} };
-  const close = () => { clearTimeout(timer); stopSpeak(); ov.remove(); currentWalkClose = null; };
+  const close = () => {
+    stopSpeak(); ov.remove(); shell.removeAttribute('data-walk');
+    washed.forEach((el) => el.removeAttribute('inert'));
+    currentWalkClose = null;
+    if (trigger && trigger.focus) trigger.focus();
+  };
   const go = (n) => { idx = Math.max(0, Math.min(steps.length - 1, n)); render(); };
   function render() {
-    if (!ov.isConnected) return; // a queued auto-advance timer may fire after teardown
+    if (!ov.isConnected) return;
     const s = steps[idx];
     ov.innerHTML = `
-      <button class="walk-close" aria-label="Close">✕</button>
-      <div class="walk-dots">${steps.map((_, j) => `<span class="${j < idx ? 'past' : j === idx ? 'on' : ''}"></span>`).join('')}</div>
-      <div class="walk-text">${esc(s.t)}</div>
-      <div class="walk-ctrl">
-        <button class="ghost sm" data-act="prev" ${idx === 0 ? 'disabled' : ''}>Back</button>
-        <button class="voice ${voice ? 'on' : ''}" data-act="voice" aria-label="${voice ? 'Mute' : 'Read aloud'}">${voice ? ICONS.volume : ICONS.mute}</button>
-        <button class="cta sm" data-act="next">${idx === steps.length - 1 ? 'Done' : 'Next'}</button>
+      <button class="walk-close" aria-label="Close walkthrough">✕</button>
+      <div class="walk-card">
+        <div class="walk-dots" aria-hidden="true">${steps.map((_, j) => `<span class="${j < idx ? 'past' : j === idx ? 'on' : ''}"></span>`).join('')}</div>
+        <div class="walk-text">${esc(s.t)}</div>
+        <div class="walk-ctrl">
+          <button class="ghost sm" data-act="prev" ${idx === 0 ? 'disabled' : ''}>Back</button>
+          <button class="voice ${voice ? 'on' : ''}" data-act="voice" aria-pressed="${voice}" aria-label="${voice ? 'Stop reading aloud' : 'Read aloud'}">${voice ? ICONS.volume : ICONS.mute}</button>
+          <button class="cta sm" data-act="next">${idx === steps.length - 1 ? 'Done' : 'Next'}</button>
+        </div>
       </div>`;
     ov.querySelector('.walk-close').onclick = close;
     ov.querySelectorAll('[data-act]').forEach((b) => { b.onclick = () => {
@@ -412,9 +440,9 @@ function startWalkthrough(r) {
       else if (a === 'prev') go(idx - 1);
       else if (a === 'voice') { voice = !voice; if (!voice) stopSpeak(); else speak(s.t); render(); }
     }; });
+    announce(s.t);                              // mirror each step to the live region
     speak(s.t);
-    clearTimeout(timer);
-    if (!reduced && idx < steps.length - 1) timer = setTimeout(() => go(idx + 1), 3400);
+    (ov.querySelector('[data-act="next"]') || ov).focus();
   }
   currentWalkClose = close;
   render();
@@ -441,21 +469,34 @@ function setOverride(kind, val) {
 const STATE_COPY = { pass: ['ok', 'Looks good'], lane2: ['work', 'Needs work'], review: ['rev', 'Review'] };
 const QLABEL = { dataScope: 'The data is', reliance: 'Relied on by', writeAuthority: 'The records it changes are', humanReview: 'Its output is' };
 
+// The audit is a DOCKED peer panel (Region D), not a modal. On wide screens it
+// docks beside the verdict (no scrim) and re-resolves the verdict live; on
+// narrow screens (≤1100px) CSS turns it into an overlay and we move focus in.
 let drawerReturnFocus = null;
+const isNarrow = () => window.matchMedia('(max-width: 1100px)').matches;
 function openDrawer() {
-  renderDrawer();
-  drawerReturnFocus = document.activeElement;
-  $('#scrim').classList.add('open'); $('#drawer').classList.add('open'); $('#drawer').setAttribute('aria-hidden', 'false');
-  $('#drawer-close').focus();
+  if (shell.dataset.dock !== 'open') { renderDrawer(); drawerReturnFocus = document.activeElement; }
+  shell.dataset.dock = 'open';
+  $('#dock-toggle')?.setAttribute('aria-expanded', 'true');
+  if (isNarrow()) { $('#scrim')?.classList.add('open'); $('#drawer-close').focus(); }
+}
+function openLighten() {
+  openDrawer();
+  requestAnimationFrame(() => {
+    const lb = $('#drawer-body .lighten-block');
+    if (lb) { lb.scrollIntoView({ block: 'nearest' }); lb.classList.add('pulse'); setTimeout(() => lb.classList.remove('pulse'), 1400); }
+  });
 }
 function closeDrawer() {
-  if (!$('#drawer').classList.contains('open')) return;
-  $('#scrim').classList.remove('open'); $('#drawer').classList.remove('open'); $('#drawer').setAttribute('aria-hidden', 'true');
+  if (shell.dataset.dock !== 'open') return;
+  shell.dataset.dock = 'closed';
+  $('#scrim')?.classList.remove('open');
+  $('#dock-toggle')?.setAttribute('aria-expanded', 'false');
   if (drawerReturnFocus && drawerReturnFocus.focus) drawerReturnFocus.focus();
 }
-$('#scrim').addEventListener('click', closeDrawer);
+$('#scrim')?.addEventListener('click', closeDrawer);
 $('#drawer-close').addEventListener('click', closeDrawer);
-window.addEventListener('keydown', (e) => { if (e.key === 'Escape') { if (currentWalkClose) currentWalkClose(); closeDrawer(); } });
+window.addEventListener('keydown', (e) => { if (e.key === 'Escape') { if (currentWalkClose) { currentWalkClose(); return; } closeDrawer(); } });
 
 function renderDrawer() {
   const r = lastResult;
@@ -537,8 +578,10 @@ function assumeHTML(a) {
 function reset() {
   if (currentWalkClose) currentWalkClose(); else document.querySelector('.walk-overlay')?.remove();
   try { window.speechSynthesis.cancel(); } catch {}
+  closeDrawer();
   corpus = null; cachedFacts = null; overrides = {}; lastResult = null;
-  card.dataset.state = 'input';
+  setState('input');
+  resetFooter();
   urlInput.value = ''; $('#analyze').disabled = true;
   $('#dropzone').classList.remove('valid');
   $('#token-row').classList.remove('open');
@@ -546,4 +589,97 @@ function reset() {
   urlInput.focus();
 }
 
+// ============================================================================
+//  Shell — activity rail (tool registry), header options, theme, status footer
+// ============================================================================
+
+// The extensibility contract: one entry per tool (a rail icon + a canvas view +
+// optional dock/footer hooks). Adding a tool = one row here. Today only the
+// Validator is live; the rest are registered-but-dormant so the rail shows the
+// shape of the toolkit without dead links.
+const TOOLS = [
+  { id: 'validator', label: 'Validator', enabled: true, icon: '<circle cx="11" cy="11" r="7"/><path d="M16 16l4.5 4.5"/>' },
+  { id: 'history', label: 'History', enabled: false, icon: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>' },
+  { id: 'library', label: 'Library', enabled: false, icon: '<rect x="4" y="4" width="6.2" height="16" rx="1.4"/><rect x="13.8" y="4" width="6.2" height="16" rx="1.4"/>' },
+  { id: 'docs', label: 'Docs', enabled: false, icon: '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/><path d="M9 13h6M9 16h5"/>' },
+];
+
+function renderRail() {
+  const host = $('#rail-tools'); if (!host) return;
+  host.innerHTML = TOOLS.map((t) => {
+    const active = t.id === shell.dataset.tool;
+    return `<button class="rail-btn${t.enabled ? '' : ' dormant'}" type="button" role="listitem" data-tool="${t.id}"
+        ${t.enabled ? '' : 'disabled tabindex="-1"'} ${active ? 'aria-current="page"' : ''}
+        aria-label="${esc(t.enabled ? t.label : t.label + ' — coming soon')}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${t.icon}</svg>
+        <span class="tip">${esc(t.enabled ? t.label : t.label + ' · soon')}</span>
+      </button>`;
+  }).join('');
+  host.querySelectorAll('.rail-btn:not(.dormant)').forEach((b) => b.addEventListener('click', () => selectTool(b.dataset.tool)));
+}
+function selectTool(id) {
+  const t = TOOLS.find((x) => x.id === id);
+  if (!t || !t.enabled) return;
+  shell.dataset.tool = id;
+  $('#th-name').textContent = t.label;
+  renderRail();
+}
+
+// ---- theme (Auto / Light / Dark), remembered -------------------------------
+function applyTheme(mode) {
+  if (mode === 'auto') document.documentElement.removeAttribute('data-theme');
+  else document.documentElement.setAttribute('data-theme', mode);
+  store.set('theme', mode);
+  $('#theme-seg')?.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.theme === mode));
+}
+
+// ---- status footer ---------------------------------------------------------
+const FOOT_VERDICT = { lane1: 'Ready to host', lane2: 'Hand to a developer', approve: 'Needs a sign-off' };
+function updateFooter(r) {
+  shell.dataset.outcome = OUTCOME[r.verdict.key];
+  const fv = $('#foot-verdict');
+  fv.dataset.kind = 'verdict';
+  fv.innerHTML = `<span class="v-dot"></span>${esc(FOOT_VERDICT[r.verdict.key] || '')}`;
+  const conf = r.confidence || { level: 'high', reasons: [] };
+  $('#foot-conf').textContent = conf.level !== 'high' ? `Lower confidence — ${conf.reasons[0] || 'limited code to read'}` : '';
+}
+function resetFooter() {
+  shell.removeAttribute('data-outcome');
+  const fv = $('#foot-verdict');
+  fv.dataset.kind = 'privacy';
+  fv.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg> Read-only · checked in your browser, never uploaded.`;
+  $('#foot-conf').textContent = '';
+}
+
+// ---- recents (the History seam) — a lightweight record per check, never code -
+function recordCheck(r) {
+  if (!r) return;
+  const list = store.get('recents', []);
+  list.unshift({ slug: slugOf(r), source: r.meta.source, verdict: r.verdict.key,
+    proven: (r.certainty || {}).proven || 0, assumed: (r.certainty || {}).assumed || 0,
+    confidence: (r.confidence || {}).level || 'high' });
+  store.set('recents', list.slice(0, 50));
+}
+
+// ---- wire the shell once ---------------------------------------------------
+function initShell() {
+  renderRail();
+  applyTheme(store.get('theme', 'auto'));
+  resetFooter();
+
+  const optsBtn = $('#opts-btn'), optsMenu = $('#opts-menu');
+  const closeOpts = () => { optsMenu.hidden = true; optsBtn.setAttribute('aria-expanded', 'false'); };
+  const toggleOpts = () => { const open = optsMenu.hidden; optsMenu.hidden = !open; optsBtn.setAttribute('aria-expanded', String(open)); };
+  optsBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleOpts(); });
+  $('#settings-btn')?.addEventListener('click', (e) => { e.stopPropagation(); toggleOpts(); });
+  optsMenu.addEventListener('click', (e) => e.stopPropagation());
+  document.addEventListener('click', closeOpts);
+  $('#theme-seg')?.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => applyTheme(b.dataset.theme)));
+
+  $('#new-check')?.addEventListener('click', reset);
+  $('#dock-toggle')?.addEventListener('click', closeDrawer);
+  $('#playbook-link')?.addEventListener('click', (e) => { e.preventDefault(); if (lastResult) openDrawer(); });
+}
+
+initShell();
 urlInput.focus();
