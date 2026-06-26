@@ -52,7 +52,10 @@
   --rail-w: 56px;
   --head-h: 52px;
   --foot-h: 30px;
-  --dock-open: 408px;        /* width of the audit dock when open */
+  /* expandable panels — each track is 0 when collapsed, its --*-open when expanded */
+  --side-w: 0px;   --side-open: 248px;    /* left sidebar (recent checks) */
+  --dock-w: 0px;   --dock-open: 408px;    /* right dock (the full check) */
+  --bottom-h: 0px; --bottom-open: 190px;  /* bottom drawer (lanes reference) */
   --measure: 680px;
 }
 
@@ -84,23 +87,84 @@ body { overflow: hidden; }   /* the shell owns the viewport; only .main scrolls 
    =========================================================================== */
 .shell {
   height: 100dvh;
-  overflow: hidden;   /* the closed dock keeps its fixed width off-track; clip it here so it
-                         never adds a page-level horizontal scrollbar (body overflow alone
-                         doesn't, due to body→viewport overflow propagation) */
+  overflow: hidden;   /* collapsed panels keep a fixed inner size off-track; clip here so they
+                         never add a page-level scrollbar (body overflow alone doesn't, due to
+                         body→viewport overflow propagation) */
   display: grid;
-  /* explicit per-state columns (not a var()) so the transition re-triggers reliably */
-  grid-template-columns: var(--rail-w) minmax(0, 1fr) 0px;
-  grid-template-rows: var(--head-h) minmax(0, 1fr) var(--foot-h);
+  /* var() tracks (NO grid transition — it won't animate a var()-track change reliably; each
+     panel column/row snaps and the panel itself slides+fades, which reads as it opening) */
+  grid-template-columns: var(--rail-w) var(--side-w) minmax(0, 1fr) var(--dock-w);
+  grid-template-rows: var(--head-h) minmax(0, 1fr) var(--bottom-h) var(--foot-h);
   grid-template-areas:
-    "rail head dock"
-    "rail main dock"
-    "foot foot foot";
+    "rail side head   dock"
+    "rail side main   dock"
+    "rail side bottom dock"
+    "foot foot foot   foot";
   background: var(--chrome-bg);
 }
-/* The dock column snaps (grid-template-columns won't animate reliably across a
-   var()-track change); the dock panel itself slides + fades in, which reads as
-   the panel opening. */
-.shell[data-dock="open"] { grid-template-columns: var(--rail-w) minmax(0, 1fr) var(--dock-open); }
+.shell[data-side="open"]   { --side-w: var(--side-open); }
+.shell[data-dock="open"]   { --dock-w: var(--dock-open); }
+.shell[data-bottom="open"] { --bottom-h: var(--bottom-open); }
+
+/* ---- Region · Left sidebar (recent checks) --------------------------- */
+.sidebar {
+  grid-area: side; overflow: hidden;
+  background: var(--chrome-bg); border-right: 1px solid var(--chrome-line);
+  display: flex; flex-direction: column;
+  opacity: 0; transition: opacity 0.22s var(--ease);
+}
+.shell[data-side="closed"] .sidebar { visibility: hidden; }
+.shell[data-side="open"]   .sidebar { opacity: 1; visibility: visible; }
+.side-head, .side-body { width: var(--side-open); }   /* fixed content width; clipped while collapsed */
+.side-head { display: flex; align-items: center; justify-content: space-between; height: var(--head-h); flex: none; padding: 0 16px; border-bottom: 1px solid var(--chrome-line); }
+.side-head h2 { font-family: var(--font-display); font-size: 11px; font-weight: 500; letter-spacing: 0.14em; text-transform: uppercase; color: var(--brown); margin: 0; }
+.side-body { flex: 1; overflow-y: auto; padding: 8px 10px 16px; }
+.side-empty { padding: 28px 14px; text-align: center; color: var(--soft); font-size: 12.5px; line-height: 1.55; }
+.side-empty svg { width: 22px; height: 22px; opacity: 0.5; margin-bottom: 8px; }
+.recent {
+  width: 100%; text-align: left; display: flex; align-items: center; gap: 10px;
+  background: none; border: none; border-radius: 9px; padding: 9px 10px; cursor: default;
+  font: inherit; font-family: var(--font-ui); color: var(--ink);
+}
+.recent + .recent { margin-top: 1px; }
+.recent:hover { background: var(--hover); }
+.recent .rdot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.recent[data-v="lane1"] .rdot { background: var(--ready); }
+.recent[data-v="lane2"] .rdot { background: var(--developer); }
+.recent[data-v="approve"] .rdot { background: var(--signoff); }
+.recent .rslug { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.recent .rmeta { font-size: 11px; color: var(--soft); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.recent .rtx { min-width: 0; flex: 1; }
+.side-clear { display: block; margin: 10px auto 0; background: none; border: none; font-family: var(--font-ui); font-size: 11.5px; color: var(--soft); cursor: pointer; border-bottom: 1px solid var(--hairline); }
+.side-clear:hover { color: var(--ink); }
+
+/* ---- Region · Bottom drawer (lanes reference) ------------------------ */
+.bottompanel {
+  grid-area: bottom; overflow: hidden;
+  background: var(--chrome-bg); border-top: 1px solid var(--chrome-line);
+  display: flex; flex-direction: column;
+  opacity: 0; transition: opacity 0.22s var(--ease);
+}
+.shell[data-bottom="closed"] .bottompanel { visibility: hidden; }
+.shell[data-bottom="open"]   .bottompanel { opacity: 1; visibility: visible; }
+.bottom-head { display: flex; align-items: center; justify-content: space-between; flex: none; padding: 10px 18px 4px; }
+.bottom-head h2 { font-family: var(--font-display); font-size: 11px; font-weight: 500; letter-spacing: 0.14em; text-transform: uppercase; color: var(--brown); margin: 0; }
+.bottom-body { flex: 1; overflow-y: auto; padding: 6px 18px 16px; display: flex; gap: 12px; align-items: stretch; }
+.lane-card { flex: 1; min-width: 0; background: var(--gray); border-radius: 11px; padding: 12px 14px; border-left: 3px solid var(--lc); }
+.lane-card[data-v="lane1"] { --lc: var(--ready); }
+.lane-card[data-v="lane2"] { --lc: var(--developer); }
+.lane-card[data-v="approve"] { --lc: var(--signoff); }
+.lane-card .lh { display: flex; align-items: center; gap: 8px; font-family: var(--font-ui); font-size: 13px; font-weight: 600; color: var(--ink); }
+.lane-card .lh .ldot { width: 8px; height: 8px; border-radius: 50%; background: var(--lc); flex: none; }
+.lane-card .lp { font-size: 12px; color: var(--muted); line-height: 1.45; margin: 6px 0 0; }
+.lane-gates { flex: none; width: 220px; align-self: center; font-size: 11.5px; color: var(--soft); line-height: 1.5; }
+.lane-gates b { font-family: var(--font-display); font-size: 9.5px; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase; color: var(--brown); display: block; margin-bottom: 4px; }
+
+/* ---- panel-toggle glyphs in the tool header -------------------------- */
+.panel-toggle .pf { opacity: 0; transition: opacity 0.16s var(--ease); }
+.panel-toggle[aria-pressed="true"] { background: var(--hover); color: var(--brand); }
+.panel-toggle[aria-pressed="true"] .pf { opacity: 1; }
+.th-divider { width: 1px; height: 18px; background: var(--chrome-line); margin: 0 3px; flex: none; }
 
 /* ---- Region A · Activity rail ---------------------------------------- */
 .rail {
@@ -241,7 +305,7 @@ body { overflow: hidden; }   /* the shell owns the viewport; only .main scrolls 
 .prompt {
   font-family: var(--font-serif); font-style: italic; font-weight: 600;
   font-size: 25px; line-height: 1.32; color: var(--ink);
-  margin: 0 0 22px; max-width: 22ch;
+  margin: 0 0 22px;   /* no max-width: fits on one line where there's room, wraps on a narrow phone */
 }
 .pill {
   display: flex; align-items: center; gap: 6px;
@@ -501,16 +565,17 @@ body { overflow: hidden; }   /* the shell owns the viewport; only .main scrolls 
 
 /* ---- Region E · Status footer ---------------------------------------- */
 .foot {
-  grid-area: foot; z-index: 4;
+  grid-area: foot; z-index: 4; overflow: hidden;   /* never let a zone spill past the bar */
   background: var(--chrome-bg); border-top: 1px solid var(--chrome-line);
   display: flex; align-items: center; gap: 16px; padding: 0 16px;
   font-family: var(--font-ui); font-size: 11.5px; color: var(--muted);
 }
-.foot-l { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
+.foot-l { display: inline-flex; align-items: center; gap: 7px; min-width: 0; }
 .foot-l svg { opacity: 0.7; flex: none; }
 .foot-l .v-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex: none; }
+.foot-txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .foot-c { flex: 1; min-width: 0; color: var(--error-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.foot-r { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; color: var(--soft); }
+.foot-r { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; color: var(--soft); flex: none; }
 .foot-sep { opacity: 0.5; }
 .foot-link { font-family: var(--font-display); font-size: 10px; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase; color: var(--brown); text-decoration: none; border-bottom: 1px solid transparent; }
 .foot-link:hover { color: var(--brand); border-color: var(--brand); }
@@ -609,9 +674,10 @@ body { overflow: hidden; }   /* the shell owns the viewport; only .main scrolls 
 /* scrim only renders when the dock is an overlay (≤1100px) */
 .scrim { display: none; }
 
-/* laptop/tablet: the dock falls back to an overlay (with dialog semantics in JS) */
+/* laptop/tablet: the dock AND sidebar fall back to overlays; the bottom drawer
+   stays an in-flow row. A scrim appears behind whichever overlay is open. */
 @media (max-width: 1100px) {
-  .shell { grid-template-columns: var(--rail-w) minmax(0, 1fr) 0px !important; }
+  .shell { grid-template-columns: var(--rail-w) 0px minmax(0, 1fr) 0px !important; }
   .dock {
     position: fixed; top: 0; right: 0; height: 100dvh; width: min(408px, 92vw);
     border-left: 1px solid var(--chrome-line); box-shadow: -24px 0 60px -30px rgba(40,38,34,0.34);
@@ -619,17 +685,26 @@ body { overflow: hidden; }   /* the shell owns the viewport; only .main scrolls 
   }
   .shell[data-dock="open"] .dock { transform: none; visibility: visible; }
   .dock-handle { display: none; }
+  .sidebar {
+    position: fixed; top: 0; left: var(--rail-w); height: 100dvh; width: min(248px, 80vw);
+    box-shadow: 24px 0 60px -30px rgba(40,38,34,0.34);
+    transform: translateX(-115%); transition: transform 0.30s var(--ease), opacity 0.22s var(--ease); z-index: 50;
+  }
+  .shell[data-side="open"] .sidebar { transform: none; visibility: visible; }
   .scrim { display: block; position: fixed; inset: 0; background: rgba(28,27,25,0.30); backdrop-filter: blur(1px); opacity: 0; pointer-events: none; transition: opacity 0.3s var(--ease); z-index: 45; }
-  .scrim.open { opacity: 1; pointer-events: auto; }
+  .shell[data-dock="open"] ~ .scrim, .shell[data-side="open"] ~ .scrim { opacity: 1; pointer-events: auto; }
 }
 
 /* phone: rail becomes a bottom tab bar; header stays; footer collapses to essentials */
 @media (max-width: 720px) {
   .shell {
     grid-template-columns: minmax(0, 1fr) !important;
-    grid-template-rows: var(--head-h) minmax(0, 1fr) 48px var(--foot-h);
-    grid-template-areas: "head" "main" "rail" "foot";
+    grid-template-rows: var(--head-h) minmax(0, 1fr) var(--bottom-h) 48px var(--foot-h);
+    grid-template-areas: "head" "main" "bottom" "rail" "foot";
   }
+  .sidebar { left: 0; width: min(248px, 86vw); }
+  .bottom-body { flex-direction: column; }
+  .lane-gates { width: auto; }
   .rail { flex-direction: row; border-right: none; border-top: 1px solid var(--chrome-line); padding: 0 10px; gap: 6px; justify-content: flex-start; }
   .brand { margin-bottom: 0; margin-right: 4px; }
   .rail-tools { flex-direction: row; width: auto; }
@@ -639,6 +714,21 @@ body { overflow: hidden; }   /* the shell owns the viewport; only .main scrolls 
   .foot-c { display: none; }
   .prompt { font-size: 22px; }
   .canvas { padding: 28px 20px; }
+  .shell { --bottom-open: 230px; }   /* the reference stacks vertically here — give it room */
+}
+
+/* footer: drop the long disclaimer (and its separator) once the bar gets tight.
+   The "GPFS POC Triage" link still anchors it, and the full line lives in the dock
+   colophon + the reference drawer. The left status zone ellipsizes as a safety net. */
+@media (max-width: 760px) {
+  .foot-disclaimer, .foot-r .foot-sep { display: none; }
+}
+
+/* small phones: the tool name duplicates the rail's active tool — drop it so the
+   header actions never collide with it */
+@media (max-width: 480px) {
+  .th-name { display: none; }
+  .toolhead { justify-content: flex-end; }
 }
 
 /* coarse pointers: bigger targets */
@@ -656,7 +746,7 @@ body { overflow: hidden; }   /* the shell owns the viewport; only .main scrolls 
   .shell { transition: none !important; }
 }
 @media (forced-colors: active) {
-  .rail, .toolhead, .dock, .foot { border-color: CanvasText; }
+  .rail, .toolhead, .dock, .foot, .sidebar, .bottompanel { border-color: CanvasText; }
   .rail-btn[aria-current="page"]::before { background: Highlight; }
   .tile, .pill, .seg, .cert-block { border: 1px solid CanvasText; }
   :focus-visible { outline: 2px solid Highlight; }

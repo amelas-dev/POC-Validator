@@ -13,7 +13,7 @@
 <body>
   <a class="skip" href="#work">Skip to validator</a>
 
-  <div class="shell" id="shell" data-tool="validator" data-dock="closed">
+  <div class="shell" id="shell" data-tool="validator" data-side="closed" data-dock="closed" data-bottom="closed">
 
     <!-- ============ Region A · Activity rail ============ -->
     <nav class="rail" aria-label="Tools">
@@ -38,11 +38,30 @@
       </div>
     </nav>
 
+    <!-- ============ Region · Left sidebar (recent checks) ============ -->
+    <aside class="sidebar" id="sidebar" aria-labelledby="sidebar-title">
+      <div class="side-head">
+        <h2 id="sidebar-title">Recent checks</h2>
+        <button class="x" id="side-close" type="button" aria-label="Close recent checks">×</button>
+      </div>
+      <div class="side-body" id="side-body"><!-- recents rendered from localStorage --></div>
+    </aside>
+
     <!-- ============ Region B · Tool header ============ -->
     <header class="toolhead">
       <div class="th-name" id="th-name">Validator</div>
       <div class="th-actions">
         <button class="th-pill" id="new-check" type="button" hidden>New check</button>
+        <button class="th-icon panel-toggle" id="panel-left" type="button" aria-pressed="false" aria-label="Toggle recent checks (left sidebar)" title="Recent checks">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="15" rx="2"/><line x1="9" y1="4.5" x2="9" y2="19.5"/><rect class="pf" x="4" y="5.5" width="4" height="13" rx="1" fill="currentColor" stroke="none"/></svg>
+        </button>
+        <button class="th-icon panel-toggle" id="panel-bottom" type="button" aria-pressed="false" aria-label="Toggle lanes reference (bottom drawer)" title="Lanes reference">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="15" rx="2"/><line x1="3" y1="14" x2="21" y2="14"/><rect class="pf" x="4" y="15" width="16" height="3.5" rx="1" fill="currentColor" stroke="none"/></svg>
+        </button>
+        <button class="th-icon panel-toggle" id="panel-right" type="button" aria-pressed="false" aria-label="Toggle the full check (right panel)" title="The full check">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="15" rx="2"/><line x1="15" y1="4.5" x2="15" y2="19.5"/><rect class="pf" x="16" y="5.5" width="4" height="13" rx="1" fill="currentColor" stroke="none"/></svg>
+        </button>
+        <span class="th-divider" aria-hidden="true"></span>
         <button class="th-icon" id="opts-btn" type="button" aria-haspopup="true" aria-expanded="false" aria-label="Options">
           <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>
         </button>
@@ -110,6 +129,32 @@
       <div class="drop-hint" aria-hidden="true">Drop it — I’ve got it.</div>
     </main>
 
+    <!-- ============ Region · Bottom drawer (lanes reference) ============ -->
+    <aside class="bottompanel" id="bottompanel" aria-labelledby="bottom-title">
+      <div class="bottom-head">
+        <h2 id="bottom-title">Lanes — reference</h2>
+        <button class="x" id="bottom-close" type="button" aria-label="Close reference">×</button>
+      </div>
+      <div class="bottom-body">
+        <div class="lane-card" data-v="lane1">
+          <div class="lh"><span class="ldot"></span>Lane 1 · light path</div>
+          <p class="lp">Publish behind login after a quick safety check. The builder stays responsible.</p>
+        </div>
+        <div class="lane-card" data-v="lane2">
+          <div class="lh"><span class="ldot"></span>Lane 2 · developer</div>
+          <p class="lp">A developer builds it out before it goes live — a normal next step, on isolated hosting.</p>
+        </div>
+        <div class="lane-card" data-v="approve">
+          <div class="lh"><span class="ldot"></span>Approve · sign-off</div>
+          <p class="lp">A developer builds it and the AI Committee approves before launch — sensitive client or fund work.</p>
+        </div>
+        <div class="lane-gates">
+          <b>What pushes it heavier</b>
+          Updating a system of record · a client deliverable relied on · probabilistic output nobody reviews.
+        </div>
+      </div>
+    </aside>
+
     <!-- ============ Region D · Audit dock ============ -->
     <aside class="dock" id="dock" aria-labelledby="dock-title">
       <button class="dock-handle" id="dock-toggle" type="button" aria-label="Collapse the full check" aria-expanded="false">
@@ -134,7 +179,7 @@
       </div>
       <div class="foot-c" id="foot-conf"></div>
       <div class="foot-r">
-        Indication only — your AI Operations Lead makes the call
+        <span class="foot-disclaimer">Indication only — your AI Operations Lead makes the call</span>
         <span class="foot-sep">·</span>
         <a class="foot-link" href="#" id="playbook-link">GPFS POC Triage</a>
       </div>

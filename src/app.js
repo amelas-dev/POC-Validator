@@ -312,6 +312,7 @@ function renderResult() {
 
   announce(`${v.headline} ${v.story}`);
   updateFooter(r);
+  if (shell.dataset.dock === 'open') renderDrawer();   // keep an open dock in sync with the verdict
 
   $('#trust-line').addEventListener('click', openDrawer);
   $('#cta').addEventListener('click', () => copyHandoff(r, v));
@@ -477,8 +478,9 @@ const isNarrow = () => window.matchMedia('(max-width: 1100px)').matches;
 function openDrawer() {
   if (shell.dataset.dock !== 'open') { renderDrawer(); drawerReturnFocus = document.activeElement; }
   shell.dataset.dock = 'open';
+  syncPanelBtn('dock', true); store.set('panel.dock', true);
   $('#dock-toggle')?.setAttribute('aria-expanded', 'true');
-  if (isNarrow()) { $('#scrim')?.classList.add('open'); $('#drawer-close').focus(); }
+  if (isNarrow()) $('#drawer-close').focus();
 }
 function openLighten() {
   openDrawer();
@@ -490,16 +492,29 @@ function openLighten() {
 function closeDrawer() {
   if (shell.dataset.dock !== 'open') return;
   shell.dataset.dock = 'closed';
-  $('#scrim')?.classList.remove('open');
+  syncPanelBtn('dock', false); store.set('panel.dock', false);
   $('#dock-toggle')?.setAttribute('aria-expanded', 'false');
   if (drawerReturnFocus && drawerReturnFocus.focus) drawerReturnFocus.focus();
 }
-$('#scrim')?.addEventListener('click', closeDrawer);
+// scrim sits behind whichever overlay is open on narrow screens — close them
+$('#scrim')?.addEventListener('click', () => { closeDrawer(); setSidebar(false); });
 $('#drawer-close').addEventListener('click', closeDrawer);
-window.addEventListener('keydown', (e) => { if (e.key === 'Escape') { if (currentWalkClose) { currentWalkClose(); return; } closeDrawer(); } });
+window.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  if (currentWalkClose) { currentWalkClose(); return; }
+  if (shell.dataset.dock === 'open') { closeDrawer(); return; }
+  if (shell.dataset.side === 'open') { setSidebar(false); return; }
+});
 
 function renderDrawer() {
   const r = lastResult;
+  if (!r) {
+    $('#drawer-body').innerHTML = `<div class="side-empty" style="padding:44px 18px">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M16 16l4.5 4.5"/></svg>
+      <div>Run a check to see the full audit — every condition in plain words, with the evidence from your code.</div>
+    </div>`;
+    return;
+  }
   const rows = r.conditions.map((c) => {
     const def = COND[c.id] || {};
     let stClass, stText, copy;
@@ -558,7 +573,7 @@ function renderDrawer() {
     </div>`;
 
   $('#drawer-body').querySelectorAll('.seg button').forEach((b) => b.addEventListener('click', () => {
-    setOverride(b.dataset.kind, b.dataset.val); renderResult(); renderDrawer();
+    setOverride(b.dataset.kind, b.dataset.val); renderResult();   // renderResult refreshes the open dock
   }));
   let techOn = false;
   $('#tech-toggle').addEventListener('click', () => {
@@ -639,7 +654,7 @@ function updateFooter(r) {
   shell.dataset.outcome = OUTCOME[r.verdict.key];
   const fv = $('#foot-verdict');
   fv.dataset.kind = 'verdict';
-  fv.innerHTML = `<span class="v-dot"></span>${esc(FOOT_VERDICT[r.verdict.key] || '')}`;
+  fv.innerHTML = `<span class="v-dot"></span><span class="foot-txt">${esc(FOOT_VERDICT[r.verdict.key] || '')}</span>`;
   const conf = r.confidence || { level: 'high', reasons: [] };
   $('#foot-conf').textContent = conf.level !== 'high' ? `Lower confidence — ${conf.reasons[0] || 'limited code to read'}` : '';
 }
@@ -647,7 +662,7 @@ function resetFooter() {
   shell.removeAttribute('data-outcome');
   const fv = $('#foot-verdict');
   fv.dataset.kind = 'privacy';
-  fv.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg> Read-only · checked in your browser, never uploaded.`;
+  fv.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg><span class="foot-txt">Read-only · checked in your browser, never uploaded.</span>`;
   $('#foot-conf').textContent = '';
 }
 
@@ -659,6 +674,44 @@ function recordCheck(r) {
     proven: (r.certainty || {}).proven || 0, assumed: (r.certainty || {}).assumed || 0,
     confidence: (r.confidence || {}).level || 'high' });
   store.set('recents', list.slice(0, 50));
+  if (shell.dataset.side === 'open') renderSidebar();
+}
+
+// ============================================================================
+//  Expandable panels — left sidebar (recent checks) · bottom drawer (reference)
+//  · right dock (the full check, handled by openDrawer/closeDrawer below). Each
+//  is a real grid region with a header panel-toggle, remembered across reloads.
+// ============================================================================
+const PANEL_BTN = { side: '#panel-left', bottom: '#panel-bottom', dock: '#panel-right' };
+function syncPanelBtn(name, open) { $(PANEL_BTN[name])?.setAttribute('aria-pressed', String(open)); }
+
+function setSidebar(open) {
+  shell.dataset.side = open ? 'open' : 'closed';
+  syncPanelBtn('side', open); store.set('panel.side', open);
+  if (open) renderSidebar();
+}
+function setBottom(open) {
+  shell.dataset.bottom = open ? 'open' : 'closed';
+  syncPanelBtn('bottom', open); store.set('panel.bottom', open);
+}
+
+const RECENT_LABEL = { lane1: 'Ready to host', lane2: 'Hand to a developer', approve: 'Needs a sign-off' };
+function renderSidebar() {
+  const host = $('#side-body'); if (!host) return;
+  const list = store.get('recents', []);
+  if (!list.length) {
+    host.innerHTML = `<div class="side-empty">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>
+      <div>Your checked tools will show up here.</div>
+    </div>`;
+    return;
+  }
+  host.innerHTML = list.map((r) => `<div class="recent" role="listitem" data-v="${esc(r.verdict)}">
+      <span class="rdot" aria-hidden="true"></span>
+      <span class="rtx"><span class="rslug">${esc(r.slug)}</span><span class="rmeta">${esc(RECENT_LABEL[r.verdict] || '')} · ${r.proven} read · ${r.assumed} assumed</span></span>
+    </div>`).join('')
+    + `<button class="side-clear" id="side-clear" type="button">Clear history</button>`;
+  $('#side-clear')?.addEventListener('click', () => { store.set('recents', []); renderSidebar(); });
 }
 
 // ---- wire the shell once ---------------------------------------------------
@@ -678,7 +731,20 @@ function initShell() {
 
   $('#new-check')?.addEventListener('click', reset);
   $('#dock-toggle')?.addEventListener('click', closeDrawer);
-  $('#playbook-link')?.addEventListener('click', (e) => { e.preventDefault(); if (lastResult) openDrawer(); });
+  $('#playbook-link')?.addEventListener('click', (e) => { e.preventDefault(); setBottom(true); });
+
+  // expandable panels — left sidebar · bottom drawer · right dock
+  renderSidebar();
+  $('#panel-left')?.addEventListener('click', () => setSidebar(shell.dataset.side !== 'open'));
+  $('#panel-bottom')?.addEventListener('click', () => setBottom(shell.dataset.bottom !== 'open'));
+  $('#panel-right')?.addEventListener('click', () => { if (shell.dataset.dock === 'open') closeDrawer(); else openDrawer(); });
+  $('#side-close')?.addEventListener('click', () => setSidebar(false));
+  $('#bottom-close')?.addEventListener('click', () => setBottom(false));
+
+  // restore remembered layout
+  if (store.get('panel.side', false)) setSidebar(true);
+  if (store.get('panel.bottom', false)) setBottom(true);
+  if (store.get('panel.dock', false)) openDrawer();
 }
 
 initShell();
