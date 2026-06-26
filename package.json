@@ -1,0 +1,13 @@
+{
+  "name": "poc-validator",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "GPFS POC Validator — drop in a GitHub URL or code files and instantly see which governance Lane the POC is, and why.",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test/run.mjs"
+  },
+  "author": "GPFS",
+  "license": "UNLICENSED"
+}

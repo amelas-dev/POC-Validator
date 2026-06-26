@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Lane</title>
+  <meta name="description" content="Paste your tool. See if it can go live." />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='8' fill='%232E9E73'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="src/styles/app.css" />
+</head>
+<body>
+  <div class="wrap">
+    <div class="stage" id="card" data-state="input">
+      <svg class="edge-ring" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+        <rect x="0.75" y="0.75" width="98.5" height="98.5" rx="8" pathLength="1" vector-effect="non-scaling-stroke" />
+      </svg>
+
+      <header class="chrome">
+        <div class="wordmark">Lane</div>
+        <div class="org">GP Fund Solutions</div>
+      </header>
+
+      <!-- INPUT -->
+      <section class="view view-input">
+        <p class="prompt">Paste a GitHub link, or drop your tool here — I’ll tell you if it can go live.</p>
+
+        <div class="pill" id="dropzone">
+          <span class="valid-check" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M5 12.5l4.5 4.5L19 7"/></svg></span>
+          <input type="text" id="url" placeholder="github.com/org/repo" autocomplete="off" spellcheck="false" aria-label="GitHub repository link" />
+          <button class="go" id="analyze" disabled>Check it</button>
+        </div>
+
+        <div class="aux">
+          <button class="linkish" id="try-example">try an example</button>
+          <span>·</span>
+          <button class="linkish" id="pick-files">choose a file</button>
+        </div>
+
+        <div class="collapsible" id="token-row">
+          <input type="password" id="token" placeholder="GitHub access token, then press Check again" autocomplete="off" aria-label="GitHub personal access token" />
+          <p class="hint" id="token-hint">Only used to read a private repo or lift the public rate limit. Never stored.</p>
+        </div>
+
+        <div class="error" id="error">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-top:1px"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>
+          <span id="error-text"></span>
+        </div>
+
+        <div class="reassure">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          Read-only. Your files are checked right here and never leave your browser.
+        </div>
+
+        <input type="file" id="file-input" multiple hidden />
+        <input type="file" id="folder-input" webkitdirectory directory multiple hidden />
+        <input type="file" id="zip-input" accept=".zip" hidden />
+      </section>
+
+      <!-- ANALYZING -->
+      <section class="view view-analyzing">
+        <div class="pre-orb"></div>
+        <div class="phase" id="phase">Reading your tool…</div>
+      </section>
+
+      <!-- RESULT -->
+      <section class="view view-result" id="result"></section>
+
+      <div class="drop-hint">Drop it — I’ve got it.</div>
+    </div>
+  </div>
+
+  <!-- full-check drawer -->
+  <div class="scrim" id="scrim"></div>
+  <aside class="drawer" id="drawer" aria-hidden="true">
+    <div class="drawer-head">
+      <h2>The full check</h2>
+      <button class="x" id="drawer-close" aria-label="Close">×</button>
+    </div>
+    <div class="drawer-body" id="drawer-body"></div>
+    <div class="colophon-mini">
+      A quick read, not the final word — your AI Operations Lead makes the hosting call,
+      under the GPFS POC Triage &amp; Hosting Playbook.
+    </div>
+  </aside>
+
+  <script src="src/vendor/jszip.min.js"></script>
+  <script type="module" src="src/app.js"></script>
+</body>
+</html>

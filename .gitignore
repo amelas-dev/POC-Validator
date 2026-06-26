@@ -1,0 +1,15 @@
+# Local tooling / editor state (machine-specific; not for sharing)
+.claude/
+*.local.json
+
+# Dependencies / build
+node_modules/
+dist/
+build/
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.log
+.vscode/
+.idea/

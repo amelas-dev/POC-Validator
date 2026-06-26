@@ -1,0 +1,467 @@
+[
+  {
+    "id": "L1-CLEAN-01",
+    "title": "Deterministic CSV-to-Markdown table formatter (clean Lane 1)",
+    "description": "A single-page static tool that takes pasted CSV text and renders a Markdown/HTML table client-side. Pure string transformation, no value mutation, no network, no storage. The textbook clean Lane 1 utility.",
+    "files": [
+      {
+        "path": "index.html",
+        "snippet": "<!DOCTYPE html>\n<html lang=\"en\">\n<head><meta charset=\"utf-8\"><title>CSV to Markdown</title>\n<style>body{font-family:system-ui;margin:2rem}textarea{width:100%}</style>\n</head>\n<body>\n  <h1>CSV \u2192 Markdown Table</h1>\n  <p class=\"banner\">Utility \u2014 not production-hardened</p>\n  <textarea id=\"in\" rows=\"8\" placeholder=\"paste CSV here\"></textarea>\n  <button id=\"go\">Convert</button>\n  <pre id=\"out\"></pre>\n  <script src=\"./format.js\"></script>\n</body>\n</html>"
+      },
+      {
+        "path": "format.js",
+        "snippet": "// pure, deterministic: split lines, escape pipes, join with | separators\nfunction csvToMarkdown(text) {\n  const rows = text.trim().split(/\\r?\\n/).map(r => r.split(','));\n  const esc = c => c.replace(/\\|/g, '\\\\|').trim();\n  const head = '| ' + rows[0].map(esc).join(' | ') + ' |';\n  const sep  = '| ' + rows[0].map(() => '---').join(' | ') + ' |';\n  const body = rows.slice(1).map(r => '| ' + r.map(esc).join(' | ') + ' |').join('\\n');\n  return [head, sep, body].join('\\n');\n}\ndocument.getElementById('go').onclick = () => {\n  document.getElementById('out').textContent =\n    csvToMarkdown(document.getElementById('in').value);\n};"
+      },
+      {
+        "path": "README.md",
+        "snippet": "# CSV to Markdown\nPaste arbitrary CSV, get a Markdown table. Runs entirely in the browser.\nNo data leaves the page. General/sample data only. Built by me for my own notes;\nshared the link with the team so they can reuse it."
+      }
+    ],
+    "expectedLane": "Lane 1",
+    "expectedTier": "Register",
+    "expectedFailingConditions": [],
+    "rationale": "Logic is GREEN (deterministic string manipulation, no numeric mutation), General data only, no writes, no runtime AI call, no outbound network, no third-party CDN scripts (only a same-origin ./format.js), no persistence. It is shared with the team so the tier is REGISTER, not USE. The pattern guide maps Data formatting -> Lane 1; section 5.1 admits a USE tier OR a bounded Pilot, but per STAR the gating concern for Lane 1 is failing a 5.x condition, not the Register tier itself \u2014 a Register-tier, fully-5.x-compliant formatter is hostable as-is. No 5.x condition fails, so it stays Lane 1. This is the canonical clean case and a useful test that the classifier does not wrongly bounce Register-tier tools out of Lane 1 when every 5.x condition holds."
+  },
+  {
+    "id": "L1-CHATPROXY-02",
+    "title": "Meeting-notes tidier that calls the approved /api/chat proxy on General data (stays Lane 1)",
+    "description": "A tool that sends pasted meeting notes to the platform's approved enterprise /api/chat proxy (same-origin) to reformat bullet points. Runtime AI is present but routed only through the approved endpoint on General data, with the output reviewed by the user. Edge case: runtime AI that still qualifies for Lane 1.",
+    "files": [
+      {
+        "path": "app.js",
+        "snippet": "// Calls the APPROVED enterprise proxy only. No vendor SDK, no client-side key.\nasync function tidy(notes) {\n  const res = await fetch('/api/chat', {\n    method: 'POST',\n    headers: { 'Content-Type': 'application/json' },\n    body: JSON.stringify({\n      messages: [{ role: 'user',\n        content: 'Reformat these rough meeting notes into clean bullets:\\n' + notes }]\n    })\n  });\n  const data = await res.json();\n  return data.reply;\n}\ndocument.querySelector('#run').addEventListener('click', async () => {\n  const out = await tidy(document.querySelector('#notes').value);\n  // user eyeballs every result before pasting it anywhere\n  document.querySelector('#out').textContent = out;\n});"
+      },
+      {
+        "path": "index.html",
+        "snippet": "<main>\n  <p class=\"label\">Utility \u2014 not production-hardened</p>\n  <textarea id=\"notes\" placeholder=\"paste your own meeting notes\"></textarea>\n  <button id=\"run\">Tidy notes</button>\n  <div id=\"out\" contenteditable=\"true\"></div>\n  <script src=\"./app.js\"></script>\n</main>"
+      },
+      {
+        "path": "notes.txt",
+        "snippet": "sample input used in testing \u2014 my own 1:1 notes, no client or fund names:\n- talked roadmap\n- need to follow up on the dashboard idea\n- park the offsite planning til next wk"
+      }
+    ],
+    "expectedLane": "Lane 1",
+    "expectedTier": "Use",
+    "expectedFailingConditions": [],
+    "rationale": "5.5 explicitly permits a runtime AI call when it goes to an approved enterprise endpoint (the platform /api/chat proxy) on General data \u2014 this is the named exception, so 5.5 passes. The call is same-origin (/api/chat), so 5.6 (no un-allowlisted outbound, no third-party CDN) holds. Logic posture is YELLOW because the model output is probabilistic, but 5.4 allows YELLOW with 100% human review, and the user reviews every output before reuse (the editable div is for personal notes, not a downstream system). General data only (5.2), no writes (5.3), no persistence (5.7). Tier is USE: personal, builder-reviewed, General data. Every 5.x condition is met, so it is genuinely Lane 1. This is the key positive control distinguishing the approved proxy from a disqualifying direct vendor call (see L2 cases)."
+  },
+  {
+    "id": "L1-STATICTABLE-03",
+    "title": "Static unit-conversion / reference lookup page (clean Lane 1)",
+    "description": "A static HTML page with a hard-coded reference table and a deterministic unit converter (e.g., basis points, day-count fractions on illustrative inputs). All logic is fixed arithmetic over user-typed general numbers; nothing is read from or written to any system of record.",
+    "files": [
+      {
+        "path": "converter.html",
+        "snippet": "<!DOCTYPE html>\n<title>Day-Count & bps Helper</title>\n<p class=\"util-label\">Utility \u2014 not production-hardened</p>\n<label>Annual rate (%) <input id=\"rate\" type=\"number\"></label>\n<label>Days <input id=\"days\" type=\"number\"></label>\n<output id=\"r\"></output>\n<script>\n  const calc = (rate, days, basis=360) => (rate/100) * (days/basis);\n  function update(){\n    const v = calc(+rate.value, +days.value);\n    r.textContent = (v*10000).toFixed(2) + ' bps over period';\n  }\n  rate.oninput = days.oninput = update;\n</script>"
+      },
+      {
+        "path": "reference.json",
+        "snippet": "{\n  \"day_count_conventions\": {\n    \"30/360\": \"each month treated as 30 days, year as 360\",\n    \"ACT/365\": \"actual days over 365\",\n    \"ACT/360\": \"actual days over 360\"\n  },\n  \"note\": \"illustrative reference values only \u2014 not tied to any portfolio\"\n}"
+      }
+    ],
+    "expectedLane": "Lane 1",
+    "expectedTier": "Use",
+    "expectedFailingConditions": [],
+    "rationale": "GREEN deterministic arithmetic over user-supplied general numbers and a static reference table; no client/fund data is read (5.2), no writes to a source of truth (5.3 \u2014 the formula is a helper, not a reconciliation or control feeding a deliverable), no AI (5.5), no outbound network or CDN scripts \u2014 the script is inline (5.6), no persistence (5.7). Tier is USE: personal helper, builder-reviewed, general/illustrative data. This tests the boundary in the formatting/validation guide note: arithmetic is fine for Lane 1 as long as its output is not relied on for a reconciliation, control, or client deliverable. Because reference.json is explicitly illustrative and not tied to any portfolio, it does not trip the APPROVE escalation. A useful near-miss control: change the data to a live NAV feed and it would flip to Approve/Lane 2."
+  },
+  {
+    "id": "L2-SILENTPARSE-04",
+    "title": "Bank-statement line-item parser that is silently probabilistic (Lane 2)",
+    "description": "Looks like a clean static utility but uses heuristic/regex-plus-fuzzy logic to extract structured fields from messy pasted statement text. Extraction is probabilistic by nature, errors are silent, and the output is consumed downstream. Edge case: appears Lane-1-shaped but the logic posture pushes it to Lane 2.",
+    "files": [
+      {
+        "path": "parse.js",
+        "snippet": "// 'best effort' field extraction \u2014 guesses columns when layout varies\nfunction parseStatement(text) {\n  return text.split('\\n').map(line => {\n    // heuristic: assume last number-looking token is the amount\n    const amt = (line.match(/[\\d,]+\\.\\d{2}/g) || []).pop();\n    const date = (line.match(/\\d{2}\\/\\d{2}\\/\\d{4}/) || [])[0];\n    // fuzzy bucket the description against known vendor keywords\n    const desc = line.replace(amt, '').replace(date, '').trim();\n    const category = fuzzyMatch(desc, VENDOR_KEYWORDS); // returns best guess, may be wrong\n    return { date, desc, amount: amt, category };\n  });\n}\nfunction exportCsv(rows){ /* feeds the reconciliation workbook */ }"
+      },
+      {
+        "path": "vendors.js",
+        "snippet": "const VENDOR_KEYWORDS = { 'AMZN': 'Supplies', 'WIRE': 'Transfers', 'FEE': 'Bank Charges' };\nfunction fuzzyMatch(s, map){\n  // levenshtein-ish nearest key; silently returns 'Uncategorized' on low confidence\n  let best='Uncategorized'; /* ...scoring... */ return best;\n}"
+      },
+      {
+        "path": "index.html",
+        "snippet": "<h1>Statement Importer</h1>\n<textarea id=\"raw\"></textarea>\n<button onclick=\"download(exportCsv(parseStatement(raw.value)))\">Export to reconciliation CSV</button>"
+      }
+    ],
+    "expectedLane": "Lane 2",
+    "expectedTier": "Approve",
+    "expectedFailingConditions": [
+      "5.1",
+      "5.4"
+    ],
+    "rationale": "Extraction/parsing is YELLOW and probabilistic by nature \u2014 fuzzyMatch silently returns a best guess and errors are not surfaced, so it fails 5.4 (YELLOW requires 100% human review of every output, which a bulk CSV export does not provide). The output explicitly feeds a reconciliation workbook, which is an APPROVE trigger under STAR 3.1 (relied on for a reconciliation/control), so the tier is APPROVE \u2014 and the tier always wins, sending it to Lane 2 regardless of file count. That also fails 5.1 (tier is not USE). Bank-statement content is plausibly Client/Fund data feeding a reconciliation, reinforcing the escalation. This is the 'silently probabilistic parser' control: the classifier must not be fooled by the static single-page shape and must catch both the logic posture and the reconciliation reliance."
+  },
+  {
+    "id": "L2-APPROVE-STATIC-05",
+    "title": "Single static fee-recalculation page that writes a client deliverable value (Approve-state, must be Lane 2)",
+    "description": "A genuinely single static HTML file with deterministic GREEN arithmetic and no network calls \u2014 but it recomputes a management-fee figure that is copied directly into a client invoice and overwrites a cell in the shared fee register. Deterministic and static, yet the tier forces Lane 2. The marquee 'tier always wins' edge case.",
+    "files": [
+      {
+        "path": "fee-calc.html",
+        "snippet": "<!DOCTYPE html>\n<title>Q2 Management Fee Recalc \u2014 Meridian Fund LP</title>\n<!-- single static file, no external scripts, no fetch -->\n<label>Committed capital ($) <input id=\"cap\"></label>\n<label>Fee rate (bps) <input id=\"bps\"></label>\n<output id=\"fee\"></output>\n<button id=\"save\">Write to fee register</button>\n<script>\n  const calc = (cap, bps) => cap * (bps/10000); // deterministic, GREEN\n  document.getElementById('save').onclick = () => {\n    const fee = calc(+cap.value, +bps.value);\n    // POST overwrites the authoritative fee register row\n    fetch('/feeRegister/meridian-lp/q2', {method:'PUT', body: JSON.stringify({fee})});\n    fee_out.value = 'Wrote $' + fee.toFixed(2) + ' to register';\n  };\n</script>"
+      },
+      {
+        "path": "notes.md",
+        "snippet": "Used to recompute the Meridian Fund LP Q2 management fee.\nThe number produced here is pasted into the client's Q2 invoice and the\nPUT updates the official fee register that finance reconciles against."
+      }
+    ],
+    "expectedLane": "Lane 2 (Approve-state)",
+    "expectedTier": "Approve",
+    "expectedFailingConditions": [
+      "5.1",
+      "5.2",
+      "5.3"
+    ],
+    "rationale": "Logic is GREEN and the file is a single static page with inline script, which superficially screams Lane 1 \u2014 but STAR 3.1 puts it in APPROVE on three independent grounds: it touches Client/Fund data (Meridian Fund LP), its output is relied on for a client deliverable (the Q2 invoice) and a reconciliation (finance's fee register), and it WRITES to a source of truth (PUT /feeRegister). Per the playbook, THE TIER ALWAYS WINS: an Approve-state utility goes to Lane 2 even as a single static file, and additionally requires a Controlled Workflow Packet + AI Committee sign-off and Isolated Hosting. Failing 5.1 (not USE), 5.2 (Client/Fund data), and 5.3 (write to source of truth). This is the critical adversarial control proving determinism and small footprint never override the risk tier."
+  },
+  {
+    "id": "L2-TECH-01",
+    "title": "NAV reconciliation dashboard with live custodian feed and write-back",
+    "description": "A Flask/React utility that authenticates to a custodian REST API, pulls live fund position data, reconciles it against the internal accounting system, and writes the matched/break results back into the recon database. Persists fund holdings in a local SQLite cache.",
+    "files": [
+      {
+        "path": "backend/app.py",
+        "snippet": "from flask import Flask, request, jsonify\nimport requests, sqlite3\napp = Flask(__name__)\n\n@app.route('/api/recon/run', methods=['POST'])\ndef run_recon():\n    token = get_custodian_token()  # OAuth client-credentials\n    r = requests.get('https://api.statestreet-custody.com/v2/positions', headers={'Authorization': f'Bearer {token}'})\n    positions = r.json()['holdings']\n    db = sqlite3.connect('recon_cache.db')\n    db.execute('INSERT INTO fund_positions (fund_id, cusip, qty, market_value) VALUES (?,?,?,?)', ...)\n    db.commit()"
+      },
+      {
+        "path": "backend/writeback.py",
+        "snippet": "def post_breaks(breaks):\n    # writes reconciliation results to the system of record\n    conn = pyodbc.connect(RECON_PROD_DSN)\n    cur = conn.cursor()\n    cur.execute(\"UPDATE recon.dbo.Breaks SET status=?, resolved_value=? WHERE break_id=?\", ...)\n    conn.commit()"
+      },
+      {
+        "path": "frontend/Dashboard.jsx",
+        "snippet": "const res = await fetch('/api/recon/run', { method: 'POST', credentials: 'include' });\nconst { breaks } = await res.json();"
+      }
+    ],
+    "expectedLane": "Lane 2 (Approve-state)",
+    "expectedTier": "Approve",
+    "expectedFailingConditions": [
+      "5.1",
+      "5.2",
+      "5.3",
+      "5.6",
+      "5.7"
+    ],
+    "rationale": "Touches Fund data and writes to a source of truth (the recon DB is a control/reconciliation system of record), so the tier is APPROVE (STAR 3.1) and the tier always wins -> Lane 2 / Isolated + AI Committee sign-off. It independently fails multiple Section 5 conditions: not USE tier (5.1), handles Fund data not General (5.2), writes to a production system (5.3), makes outbound calls to a non-allowlisted third-party custodian API (5.6), and persists Fund holdings locally (5.7). Logic is deterministic/GREEN, but that is irrelevant because the tier and several technical signals already force Lane 2."
+  },
+  {
+    "id": "L2-TECH-02",
+    "title": "Single-file client fee-schedule calculator relied on for invoicing",
+    "description": "One self-contained static HTML file, no backend, no network calls, deterministic arithmetic only. It computes client management fees from a hardcoded fee schedule, and Finance pastes the output directly into client invoices, so the output is relied on for a client deliverable / financial reporting.",
+    "files": [
+      {
+        "path": "fee_calculator.html",
+        "snippet": "<!DOCTYPE html><html><body>\n<input id=\"aum\" /> <input id=\"client\" />\n<script>\nconst SCHEDULE = { 'tier1': 0.0075, 'tier2': 0.0050 };\nfunction calcFee(aum, tier){ return aum * SCHEDULE[tier]; } // deterministic, no fetch, no AI\ndocument.getElementById('go').onclick = () => {\n  out.textContent = '$' + calcFee(+aum.value, tierFor(+aum.value)).toFixed(2);\n};\n</script></body></html>"
+      },
+      {
+        "path": "README.md",
+        "snippet": "Finance uses the computed fee figure directly on the quarterly client invoice. Inputs include client name and AUM."
+      }
+    ],
+    "expectedLane": "Lane 1",
+    "expectedTier": "Use",
+    "expectedFailingConditions": [],
+    "rationale": "REVISED per 6/25 AI Architecture Group review: working ON client/fund data no longer forces a sign-off. This is a deterministic (GREEN) fee calculator with NO write to a system of record and no AI; finance reads and is responsible for the figure it places on the invoice. That is the canonical \"scaling personal productivity tool\" the meeting put on the light path (Lane 1). It escalates only if it writes to a system of record or its output is relied on without review.",
+    "revisedBy": "6/25 meeting"
+  },
+  {
+    "id": "L2-TECH-03",
+    "title": "Meeting-notes summarizer with direct api.anthropic.com call and client-side key",
+    "description": "A static front-end utility for personal use that summarizes pasted meeting notes. It calls the Anthropic API directly from the browser using a key embedded in client-side JS, rather than the approved enterprise /api/chat proxy. General data, personal use, builder-reviewed.",
+    "files": [
+      {
+        "path": "index.html",
+        "snippet": "<textarea id=\"notes\"></textarea>\n<script type=\"module\">\nimport Anthropic from 'https://esm.sh/@anthropic-ai/sdk';\nconst client = new Anthropic({ apiKey: 'sk-ant-api03-XXXX', dangerouslyAllowBrowser: true });\nasync function summarize(text){\n  const m = await client.messages.create({ model: 'claude-opus-4-1', max_tokens: 500, messages:[{role:'user', content: 'Summarize: '+text}] });\n  return m.content[0].text;\n}\n</script>"
+      },
+      {
+        "path": "config.js",
+        "snippet": "// direct provider endpoint, not the platform proxy\nexport const ANTHROPIC_BASE = 'https://api.anthropic.com/v1/messages';"
+      }
+    ],
+    "expectedLane": "Lane 2",
+    "expectedTier": "Use",
+    "expectedFailingConditions": [
+      "5.5",
+      "5.6"
+    ],
+    "rationale": "Tier is USE (personal, General data, builder-reviewed) and posture is YELLOW (summarizing). It fails 5.5 because it makes a runtime AI model call to a direct provider endpoint (api.anthropic.com) with a client-side key and an embedded SDK -- the policy explicitly states direct api.anthropic.com / SDK calls with client-side keys do NOT qualify; only the approved enterprise /api/chat proxy on General data would. It also fails 5.6: the import pulls a third-party SDK from an external CDN (esm.sh) and makes an outbound call outside any approved allowlist. Contrast: had this same summarizer routed through /api/chat with 100% human review of each summary, it could have stayed Lane 1. As written it is Lane 2 on a clear technical signal (direct runtime AI call) despite the low tier."
+  },
+  {
+    "id": "L2-TECH-04",
+    "title": "Capital-call PDF parser that is silently probabilistic",
+    "description": "A Python utility that extracts amounts, dates, and investor names from capital-call notice PDFs using regex plus a layout/OCR heuristic, then emits a CSV the ops team consumes. No AI endpoint is called and no obvious model is present, but extraction is probabilistic by nature and errors are silent. Output is shared and relied on by the team.",
+    "files": [
+      {
+        "path": "parse_capital_calls.py",
+        "snippet": "import pdfplumber, re\n\ndef extract(pdf_path):\n    text = pdfplumber.open(pdf_path).pages[0].extract_text()\n    amount = re.search(r'Call Amount[:\\s]+\\$([\\d,\\.]+)', text)  # best-effort match, no validation\n    investor = re.search(r'Investor[:\\s]+(.+)', text)\n    due = guess_date(text)  # heuristic; falls back to 'nearest date-looking token'\n    return { 'investor': investor.group(1) if investor else None, 'amount': amount and amount.group(1), 'due': due }"
+      },
+      {
+        "path": "to_csv.py",
+        "snippet": "# ops imports this CSV into the cash-forecast workbook each morning\nrows = [extract(p) for p in glob('inbox/*.pdf')]\nwrite_csv('parsed_calls.csv', rows)  # no human verification step"
+      }
+    ],
+    "expectedLane": "Lane 2",
+    "expectedTier": "Register",
+    "expectedFailingConditions": [
+      "5.4"
+    ],
+    "rationale": "This is the 'silently probabilistic parser' edge case. There is no runtime AI call and no obvious model, so 5.5/5.6 look fine -- but extraction/parsing is probabilistic by nature (Common Utility Patterns: Extraction/parsing -> Yellow -> Lane 2/Register, errors are silent). Posture is YELLOW and there is no 100% human review of every output before use, so it fails 5.4. The output is shared and relied on by the team and feeds a cash forecast, so the tier is at least REGISTER. Lesson for the classifier: absence of an AI keyword does not make a heuristic parser GREEN -- extraction relied upon downstream is YELLOW and routes to Lane 2."
+  },
+  {
+    "id": "L2-TECH-05",
+    "title": "Compliant /api/chat email drafter that tips to Lane 2 by persisting client data",
+    "description": "An internal tool that drafts client correspondence. It correctly uses the approved enterprise /api/chat proxy (so the AI call itself is fine) and runs behind SSO, but it loads a grid widget from a third-party CDN and saves the generated client drafts plus account numbers to browser localStorage for reuse across sessions.",
+    "files": [
+      {
+        "path": "drafter.html",
+        "snippet": "<!-- approved proxy: this part is OK under 5.5 -->\n<script src=\"https://cdn.jsdelivr.net/npm/some-grid-widget@latest/grid.min.js\"></script>\n<script>\nasync function draft(prompt){\n  const r = await fetch('/api/chat', { method:'POST', credentials:'include', body: JSON.stringify({ message: prompt }) });\n  return (await r.json()).reply;\n}\n</script>"
+      },
+      {
+        "path": "store.js",
+        "snippet": "function cacheDraft(clientName, acctNo, draftText){\n  // persists client/account data locally for reuse\n  localStorage.setItem('draft_'+acctNo, JSON.stringify({ clientName, acctNo, draftText }));\n}"
+      }
+    ],
+    "expectedLane": "Lane 2",
+    "expectedTier": "Approve",
+    "expectedFailingConditions": [
+      "5.1",
+      "5.2",
+      "5.6",
+      "5.7"
+    ],
+    "rationale": "Teaching case showing the /api/chat proxy alone does NOT decide the lane. The AI call routes through the approved enterprise proxy, so 5.5 is satisfied -- a tool using only that proxy on General data with human review could stay Lane 1. But this one tips into Lane 2 on other signals: it pulls a third-party script from an external CDN (jsdelivr) outside any allowlist, failing 5.6; and it persists client name + account numbers to localStorage, failing 5.7 (no persistence of sensitive data). Because it handles Client data and produces a client-facing deliverable (correspondence, disclosure applies), the tier is APPROVE, so 5.1 and 5.2 also fail and the tier forces Lane 2 / Isolated + AI Committee sign-off regardless. The classifier must not greenlight a tool just because it sees /api/chat."
+  },
+  {
+    "id": "APPROVE-01",
+    "title": "Single static NAV reconciliation HTML page that writes a 'signed-off' flag to the accounting system of record",
+    "description": "A self-contained single-file HTML/JS utility a fund accountant opens in the browser to reconcile a fund's striked NAV against the custodian feed. It loads Client/Fund holdings, computes the variance with deterministic arithmetic, and \u2014 on 'Approve' \u2014 POSTs a sign-off record back to the NAV book-of-record API. It is one static file with no build step, which is exactly why it is a deceptive Approve-state edge case: the tier wins over the single-static-file shape.",
+    "files": [
+      {
+        "path": "nav-reconciliation.html",
+        "snippet": "<!doctype html><html><head><title>Fund NAV Sign-Off</title></head><body>\n<h1>Daily NAV Reconciliation - Approve & Sign Off</h1>\n<table id=\"holdings\"></table>\n<button id=\"approve\">Approve NAV & Sign Off</button>\n<script>\nasync function loadFund(fundId){\n  const r = await fetch(`https://navbook.gpfundsolutions.internal/api/funds/${fundId}/striked-nav`);\n  return r.json(); // Client/Fund: per-investor capital, holdings, striked NAV\n}\nfunction computeVariance(book, custodian){\n  return Number((book.nav - custodian.nav).toFixed(6)); // deterministic\n}\ndocument.getElementById('approve').onclick = async () => {\n  await fetch('https://navbook.gpfundsolutions.internal/api/funds/'+fundId+'/sign-off',\n    {method:'POST', body: JSON.stringify({approvedBy: user, finalNav, status:'SIGNED'})});\n  // writes to NAV system of record -> source of truth\n};\n</script></body></html>"
+      }
+    ],
+    "expectedLane": "Lane 2 (Approve-state)",
+    "expectedTier": "Approve",
+    "expectedFailingConditions": [
+      "5.1",
+      "5.2",
+      "5.3"
+    ],
+    "rationale": "Touches Client/Fund data (per-investor capital, holdings) and POSTs a 'SIGNED' sign-off to the NAV book-of-record (a source of truth) whose output is relied on for financial reporting and a reconciliation control -> Approve tier (STAR 3.1). Tier always wins, so it is Lane 2 even though it is a single deterministic static file. Fails 5.1 (tier is not USE), 5.2 (Client/Fund data), 5.3 (writes to a source of truth). Logic is GREEN, so 5.4 is not the trigger. Approve-state additionally needs a Controlled Workflow Packet + AI Committee sign-off (section 6)."
+  },
+  {
+    "id": "APPROVE-02",
+    "title": "Restricted-data invoice/contract parser that is silently probabilistic and feeds a billing reconciliation",
+    "description": "A Python utility that ingests Restricted client fee schedules and PDF invoices, uses a regex+heuristic 'parser' that the builder believes is deterministic but is actually probabilistic (fuzzy matching, best-guess line-item extraction), and writes extracted fee amounts into a billing reconciliation workbook relied on for client invoicing. Edge case: a parser that looks rule-based but is silently probabilistic, with errors that are silent -> Lane 2.",
+    "files": [
+      {
+        "path": "fee_parser.py",
+        "snippet": "import pdfplumber, re\nfrom rapidfuzz import process, fuzz  # fuzzy = probabilistic, errors silent\n\ndef extract_line_items(pdf_path):\n    text = pdfplumber.open(pdf_path).pages[0].extract_text()\n    # 'best guess' mapping of free-text descriptions to fee codes\n    code, score, _ = process.extractOne(desc, FEE_CODES, scorer=fuzz.token_sort_ratio)\n    amount = re.search(r'([0-9,]+\\.\\d{2})', line)  # silently misses non-standard formats\n    return {'fee_code': code, 'amount': amount}  # confidence dropped on the floor\n"
+      },
+      {
+        "path": "write_reconciliation.py",
+        "snippet": "import openpyxl\nwb = openpyxl.load_workbook('//gpfs-fileserver/Restricted/ClientBilling/Q2_reconciliation.xlsx')\nws = wb['Reconciliation']\nfor item in parsed_items:\n    ws.append([client_id, item['fee_code'], item['amount']])  # relied on for client invoicing\nwb.save('//gpfs-fileserver/Restricted/ClientBilling/Q2_reconciliation.xlsx')  # source-of-truth workbook"
+      },
+      {
+        "path": "fee_codes.csv",
+        "snippet": "fee_code,description\nMGMT-001,Management Fee\nPERF-002,Performance/Carry Fee\nADMIN-003,Fund Administration Fee"
+      }
+    ],
+    "expectedLane": "Lane 2 (Approve-state)",
+    "expectedTier": "Approve",
+    "expectedFailingConditions": [
+      "5.1",
+      "5.2",
+      "5.3",
+      "5.4"
+    ],
+    "rationale": "Handles Restricted data and produces output relied on for a billing reconciliation / client invoicing -> Approve tier. The 'parser' is YELLOW: fuzzy matching (rapidfuzz) and best-guess extraction make it silently probabilistic with errors that are not surfaced \u2014 exactly the extraction/parsing pattern the policy calls Lane 2. Writes into a source-of-truth reconciliation workbook. Fails 5.1 (not USE), 5.2 (Restricted data), 5.3 (writes to source of truth), and 5.4 (YELLOW logic without 100% human review of every output before use). Approve-state -> Lane 2 + Controlled Workflow Packet + AI Committee."
+  },
+  {
+    "id": "APPROVE-03",
+    "title": "Compliance breach-monitoring tool calling api.anthropic.com directly with a client-side key on Restricted holdings",
+    "description": "A Node/React utility that screens Restricted fund holdings against investment-mandate / compliance limits and produces a breach report a compliance officer relies on as a control. It calls the Anthropic API directly with a hard-coded client-side key to 'explain' borderline breaches, and persists the flagged Restricted holdings to local storage. Edge case stacking multiple Lane-1 failures plus the direct-model-call disqualifier.",
+    "files": [
+      {
+        "path": "src/breachMonitor.js",
+        "snippet": "import Anthropic from '@anthropic-ai/sdk';\n// Direct model call with client-side key -> disqualifies (5.5)\nconst client = new Anthropic({ apiKey: 'sk-ant-api03-XXXX', dangerouslyAllowBrowser: true });\n\nexport async function explainBreach(holding, limit){\n  const msg = await client.messages.create({\n    model: 'claude-sonnet-4-5',\n    max_tokens: 500,\n    messages: [{role:'user', content: `Holding ${holding.cusip} at ${holding.weight}% vs mandate limit ${limit}%. Explain breach.`}]\n  });\n  return msg.content[0].text; // relied on in a compliance control\n}\n\nexport function isBreach(weight, limit){ return weight > limit; } // deterministic check"
+      },
+      {
+        "path": "src/persist.js",
+        "snippet": "export function cacheHoldings(holdings){\n  // persists Restricted client/fund holdings client-side\n  localStorage.setItem('restricted_holdings', JSON.stringify(holdings));\n}"
+      },
+      {
+        "path": "src/api.js",
+        "snippet": "export async function loadMandates(fundId){\n  const r = await fetch(`https://compliance.gpfundsolutions.internal/api/mandates/${fundId}`);\n  return r.json(); // Restricted: mandate limits + holdings\n}"
+      }
+    ],
+    "expectedLane": "Lane 2 (Approve-state)",
+    "expectedTier": "Approve",
+    "expectedFailingConditions": [
+      "5.1",
+      "5.2",
+      "5.4",
+      "5.5",
+      "5.7"
+    ],
+    "rationale": "Output is a compliance breach report relied on as a control over Restricted holdings -> Approve tier; tier wins regardless. Direct api.anthropic.com call via the embedded SDK with a client-side key explicitly does NOT qualify under 5.5. The model-generated breach explanation is YELLOW judgment relied on without guaranteed human review (5.4). Restricted data (5.2), persisted to local storage (5.7), and tier is not USE (5.1). No write-to-source-of-truth in the snippet, so 5.3 is not listed. Approve-state -> Lane 2 + Committee."
+  },
+  {
+    "id": "APPROVE-04",
+    "title": "Wire/payment instruction generator that writes to the treasury source of truth \u2014 deterministic but still Approve",
+    "description": "A fully deterministic Python service that builds outbound wire payment instructions for fund capital calls/distributions from Client/Fund subscription data and submits them to the treasury/payments system of record. No AI anywhere, GREEN logic, clean code \u2014 the hard case is that a perfectly deterministic, non-AI tool is STILL Approve-state because it writes payment instructions to a source of truth relied on for client money movement.",
+    "files": [
+      {
+        "path": "generate_wires.py",
+        "snippet": "from decimal import Decimal, ROUND_HALF_UP\n\ndef build_wire(investor):\n    amount = (investor.commitment * call_pct).quantize(Decimal('0.01'), ROUND_HALF_UP)\n    return {\n        'beneficiary': investor.bank_account,   # Client/Fund banking detail (Restricted)\n        'amount': str(amount),\n        'currency': investor.currency,\n        'reference': f'CAPCALL-{fund_id}-{investor.id}'\n    }  # deterministic, no model call"
+      },
+      {
+        "path": "submit_payments.py",
+        "snippet": "import requests\ndef submit(wires):\n    # writes payment instructions to the treasury system of record\n    r = requests.post('https://treasury.gpfundsolutions.internal/api/v2/payment-batches',\n                      json={'batch': wires, 'status': 'RELEASE'}, headers=auth())\n    r.raise_for_status()  # source of truth for client money movement\n    return r.json()"
+      },
+      {
+        "path": "load_subscriptions.py",
+        "snippet": "def load(fund_id):\n    # Client/Fund subscription + bank details\n    return db.query('SELECT investor_id, commitment, bank_account, currency FROM subscriptions WHERE fund_id = %s', fund_id)"
+      }
+    ],
+    "expectedLane": "Lane 2 (Approve-state)",
+    "expectedTier": "Approve",
+    "expectedFailingConditions": [
+      "5.1",
+      "5.2",
+      "5.3"
+    ],
+    "rationale": "Generates and releases wire payment instructions written to the treasury system of record using Client/Fund + Restricted banking data \u2014 money movement relied on for a client deliverable -> Approve tier. Logic is GREEN and there is no AI at all, so 5.4 and 5.5 pass cleanly, demonstrating that determinism does not rescue an Approve-state utility: the tier always wins. Fails 5.1 (not USE), 5.2 (Client/Fund + Restricted data), 5.3 (writes to source of truth). Approve-state -> Lane 2 / Isolated + AI Committee sign-off (section 6)."
+  },
+  {
+    "id": "APPROVE-05",
+    "title": "Investor-facing capital account statement generator using the approved /api/chat proxy \u2014 still Approve because output is a client deliverable",
+    "description": "A React tool that drafts narrative capital-account statements sent to LPs. It correctly uses ONLY the approved enterprise /api/chat proxy (no direct model SDK, no client-side key) and runs behind SSO \u2014 so it passes the 5.5/5.6 traps that catch lesser tools. The catch is the tier: it pulls Client/Fund capital-account figures and the drafted narrative is a client-facing deliverable, which is Approve-state. This is the 'looks like it could be Lane 1 / approved proxy' edge case that the tier overrides.",
+    "files": [
+      {
+        "path": "src/StatementDrafter.jsx",
+        "snippet": "// Uses ONLY the approved enterprise proxy on Client/Fund data\nasync function draftNarrative(account){\n  const r = await fetch('/api/chat', {\n    method:'POST',\n    headers:{'Content-Type':'application/json'},\n    body: JSON.stringify({\n      messages:[{role:'user',\n        content:`Draft an LP capital account summary. Opening: ${account.opening}, ` +\n                `Contributions: ${account.contribs}, Distributions: ${account.dists}, ` +\n                `Closing NAV: ${account.closingNav}.`}]\n    })\n  });\n  return (await r.json()).reply; // client-facing narrative -> relied on, disclosure applies\n}"
+      },
+      {
+        "path": "src/loadAccount.js",
+        "snippet": "export async function loadAccount(lpId, fundId){\n  // Client/Fund: per-investor capital account balances\n  const r = await fetch(`/api/capital-accounts/${fundId}/${lpId}`);\n  return r.json();\n}"
+      },
+      {
+        "path": "public/index.html",
+        "snippet": "<!-- served behind GPFS SSO; no external <script src>; same-origin /api/chat only -->\n<div id=\"root\"></div>"
+      }
+    ],
+    "expectedLane": "Lane 2 (Approve-state)",
+    "expectedTier": "Approve",
+    "expectedFailingConditions": [
+      "5.1",
+      "5.2",
+      "5.4"
+    ],
+    "rationale": "The runtime AI call uses the approved /api/chat enterprise proxy (5.5 PASS) and runs behind SSO with no third-party scripts (5.6 PASS) \u2014 the traps that would catch a careless tool are avoided. But it processes Client/Fund capital-account data and produces an investor-facing capital account statement, a client deliverable -> Approve tier; tier wins. The drafting is YELLOW/Red (probabilistic, client-facing, disclosure applies) and is not guaranteed 100% human-reviewed (5.4). Fails 5.1 (not USE) and 5.2 (Client/Fund data). No write-to-source-of-truth shown, so 5.3 is not listed. Approve-state -> Lane 2 + Controlled Workflow Packet + AI Committee."
+  },
+  {
+    "id": "EDGE-01",
+    "title": "Approved /api/chat proxy tool \u2014 clean Lane 1 (the near-miss that PASSES)",
+    "description": "A single-page internal helper that rewrites a user's rough meeting note into tidy bullet points by POSTing to the approved enterprise platform proxy /api/chat. It runs behind GPFS SSO, makes no other outbound calls, persists nothing, and operates only on General data the builder pastes in. This is the adversarial 'AI call' case that the analyzer must NOT flag \u2014 it hits the explicit 5.5 carve-out for the approved enterprise endpoint on General data, and every output is shown to the builder for review.",
+    "files": [
+      {
+        "path": "index.html",
+        "snippet": "<!-- Utility \u2014 not production-hardened -->\n<textarea id=\"raw\" placeholder=\"Paste your rough meeting notes (general, no client/fund data)\"></textarea>\n<button id=\"go\">Tidy up</button>\n<pre id=\"out\"></pre>\n<script src=\"./app.js\"></script>"
+      },
+      {
+        "path": "app.js",
+        "snippet": "document.getElementById('go').onclick = async () => {\n  const text = document.getElementById('raw').value;\n  // approved enterprise endpoint \u2014 platform proxy, server holds the key\n  const r = await fetch('/api/chat', {\n    method: 'POST',\n    headers: { 'Content-Type': 'application/json' },\n    body: JSON.stringify({ prompt: 'Rewrite these notes as clean bullets:\\n' + text })\n  });\n  const { reply } = await r.json();\n  // human reviews every output before use\n  document.getElementById('out').textContent = reply;\n};"
+      }
+    ],
+    "expectedLane": "Lane 1",
+    "expectedTier": "Use",
+    "expectedFailingConditions": [],
+    "rationale": "The only AI call is to the approved platform proxy /api/chat on General data \u2014 the explicit exception in 5.5, so 5.5 is satisfied, not failed. No direct api.anthropic.com/api.openai.com call, no client-side key. Tier is USE (personal, General data, builder-reviewed), satisfying 5.1/5.2. No writes (5.3). Logic is YELLOW (rewrite is probabilistic) but the builder reviews every output before use, satisfying 5.4. Same-origin fetch, no third-party <script src>, runs behind SSO (5.6). Nothing persisted (5.7). This is the trap: an 'AI tool' that legitimately stays Lane 1 because it uses the sanctioned proxy."
+  },
+  {
+    "id": "EDGE-02",
+    "title": "Direct api.anthropic.com call with client-side key disguised as a proxy",
+    "description": "Almost identical UX to EDGE-01 \u2014 same 'tidy my notes' purpose, same General data \u2014 but instead of the approved proxy it calls api.anthropic.com directly from the browser using a key embedded in the front-end code. The function is even named callProxy() to look benign. This is the inverse near-miss: it must fail 5.5 (direct provider call with client-side key) and also 5.6 (un-allowlisted outbound network call).",
+    "files": [
+      {
+        "path": "summarize.html",
+        "snippet": "<textarea id=\"notes\"></textarea>\n<button onclick=\"callProxy()\">Summarize</button>\n<div id=\"result\"></div>\n<script src=\"./summarize.js\"></script>"
+      },
+      {
+        "path": "summarize.js",
+        "snippet": "const ANTHROPIC_KEY = 'sk-ant-api03-9f2c...';  // key shipped to the browser\nasync function callProxy() {\n  const res = await fetch('https://api.anthropic.com/v1/messages', {\n    method: 'POST',\n    headers: {\n      'x-api-key': ANTHROPIC_KEY,\n      'anthropic-version': '2023-06-01',\n      'content-type': 'application/json'\n    },\n    body: JSON.stringify({\n      model: 'claude-3-5-sonnet-20241022',\n      max_tokens: 512,\n      messages: [{ role: 'user', content: document.getElementById('notes').value }]\n    })\n  });\n  document.getElementById('result').innerText = (await res.json()).content[0].text;\n}"
+      }
+    ],
+    "expectedLane": "Lane 2",
+    "expectedTier": "Use",
+    "expectedFailingConditions": [
+      "5.5",
+      "5.6"
+    ],
+    "rationale": "Tier stays USE (General data, personal note-tidying), so the tier does not force Lane 2 \u2014 but it still fails Lane 1 on conditions. 5.5 fails because this is a DIRECT call to api.anthropic.com with a client-side key, which the policy explicitly says does NOT qualify for the enterprise-endpoint exception. 5.6 also fails: api.anthropic.com is an un-allowlisted outbound call. The misleadingly-named callProxy() and matching purpose make this the perfect adversarial twin to EDGE-01; the analyzer must read the URL/host and key, not the function name."
+  },
+  {
+    "id": "EDGE-03",
+    "title": "Deterministic currency formatter \u2014 clean Lane 1 (looks risky, isn't)",
+    "description": "A pure formatting widget: paste a column of raw numbers, get them rendered as USD strings with thousands separators and two decimals for pasting into a deck. It mentions 'amount', 'currency', and 'financial' in its labels and even has a string that says 'reconciliation-ready format', which can bait a keyword classifier toward Approve. But it changes no numeric values, writes nowhere, calls no model, persists nothing \u2014 it is a textbook GREEN deterministic formatter that stays Lane 1.",
+    "files": [
+      {
+        "path": "format.html",
+        "snippet": "<h2>Currency Formatter <small>\u2014 Utility \u2014 not production-hardened</small></h2>\n<p>Paste raw amounts; get reconciliation-ready display strings. Values are not altered, only formatted.</p>\n<textarea id=\"in\"></textarea><button id=\"fmt\">Format</button>\n<pre id=\"res\"></pre>"
+      },
+      {
+        "path": "format.js",
+        "snippet": "const fmt = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });\ndocument.getElementById('fmt').onclick = () => {\n  const lines = document.getElementById('in').value.split('\\n');\n  // deterministic: parse the literal number, format for DISPLAY only, no rounding of stored value\n  document.getElementById('res').textContent = lines\n    .map(l => l.trim() === '' ? '' : fmt.format(Number(l.replace(/[^0-9.\\-]/g, ''))))\n    .join('\\n');\n};"
+      }
+    ],
+    "expectedLane": "Lane 1",
+    "expectedTier": "Use",
+    "expectedFailingConditions": [],
+    "rationale": "Per the COMMON UTILITY PATTERNS table, data formatting is GREEN/Lane 1 and escalates only if it changes numeric values used downstream \u2014 here it only changes the display representation (Intl.NumberFormat), not the underlying values, and writes nowhere. Tier is USE: General-data display strings, builder-reviewed, no client/fund data and no source-of-truth write, so it never reaches Approve. Logic is GREEN deterministic (5.4 met), no AI call (5.5 met), no network/third-party script (5.6 met), no persistence (5.7 met). The 'reconciliation-ready' and 'currency' wording is the adversarial bait that should NOT raise the tier."
+  },
+  {
+    "id": "EDGE-04",
+    "title": "Silently-probabilistic invoice parser branded as 'validation' \u2014 Register/Lane 2",
+    "description": "A tool the builder calls a 'rules-based validator' but which actually parses unstructured vendor invoice text into structured fields (vendor, amount, due date) using fuzzy regex heuristics and a confidence score, then is shared with the AP team who rely on the extracted figures. The output is silently wrong on edge cases. This is the deterministic-formatter look-alike that is actually probabilistic extraction relied on by others \u2014 it must land Lane 2 / Register on tier and on 5.4.",
+    "files": [
+      {
+        "path": "validate_invoice.py",
+        "snippet": "# 'Invoice validator' \u2014 shared with AP team, used to pre-fill the payment sheet\nimport re\n\ndef parse_invoice(text):\n    amt = re.search(r'(?:total|amount due)[^0-9]{0,20}([0-9,]+\\.\\d{2})', text, re.I)\n    vendor = re.search(r'(?:from|vendor)[:\\s]+([A-Z][A-Za-z0-9 &.,-]{2,40})', text)\n    due = re.search(r'(?:due)[^0-9]{0,15}(\\d{1,2}[/-]\\d{1,2}[/-]\\d{2,4})', text, re.I)\n    # heuristic confidence \u2014 errors are silent when a field is missed or mis-matched\n    fields = [amt, vendor, due]\n    confidence = sum(1 for f in fields if f) / len(fields)\n    return {\n        'vendor': vendor.group(1) if vendor else None,\n        'amount': amt.group(1) if amt else None,\n        'due_date': due.group(1) if due else None,\n        'confidence': confidence\n    }"
+      },
+      {
+        "path": "README.md",
+        "snippet": "# Invoice Validator\nDrop in raw invoice text; it extracts vendor / amount / due date so the AP team can paste straight into the weekly payment run. Shared on the team drive. \"Rules-based, no AI.\""
+      }
+    ],
+    "expectedLane": "Lane 2",
+    "expectedTier": "Register",
+    "expectedFailingConditions": [
+      "5.1",
+      "5.4"
+    ],
+    "rationale": "Despite the 'rules-based validator, no AI' framing, this is extraction/parsing of unstructured text \u2014 per the patterns table that is YELLOW and Lane 2/Register because errors are silent. It is shared and relied on by the AP team (not just the builder), so the tier is at least REGISTER, failing 5.1 (Lane 1 needs USE or an approved Pilot). Logic posture is effectively YELLOW/probabilistic via fuzzy regex + confidence score, and there is no 100% human review claim, so 5.4 fails. No live model call so 5.5 is not the trigger \u2014 the failure is the silently-probabilistic-and-relied-upon nature, the exact deterministic-vs-probabilistic trap. (It stops short of Approve because amounts feed a manual payment run rather than being written to a source of truth.)"
+  },
+  {
+    "id": "EDGE-05",
+    "title": "Single static file that caches Client/Fund data in localStorage \u2014 Approve-state forced to Lane 2",
+    "description": "One self-contained HTML file, no backend, no AI, no outbound calls \u2014 superficially the simplest possible Lane 1 candidate. But it lets a user paste a fund's investor allocation table and caches it in browser localStorage between sessions, and its formatted output is used to feed a client capital-call statement. Two things force it out of Lane 1: it touches Client/Fund data used for a client deliverable (Approve tier \u2014 and the tier always wins), and it persists sensitive data in localStorage. The 'single static file' framing is the trap: simplicity does not buy Lane 1.",
+    "files": [
+      {
+        "path": "capital_call_helper.html",
+        "snippet": "<!-- Single file, no server, no AI. -->\n<h3>Capital Call Allocation Helper</h3>\n<textarea id=\"alloc\" placeholder=\"Paste fund LP allocation table (investor name, commitment, called)\"></textarea>\n<button onclick=\"save()\">Save & format</button>\n<table id=\"out\"></table>\n<script>\nfunction save() {\n  const raw = document.getElementById('alloc').value;\n  // cache the fund/investor allocation data across sessions\n  localStorage.setItem('lp_allocations', raw);\n  render(raw);\n}\nfunction render(raw) {\n  const rows = raw.trim().split('\\n').map(r => r.split('\\t'));\n  document.getElementById('out').innerHTML = rows\n    .map(c => '<tr>' + c.map(x => '<td>' + x + '</td>').join('') + '</tr>').join('');\n}\n// restore prior fund data on load\nwindow.onload = () => { const s = localStorage.getItem('lp_allocations'); if (s) render(s); };\n</script>"
+      },
+      {
+        "path": "notes.txt",
+        "snippet": "Used by the fund accounting team to lay out LP commitments/called amounts for the quarterly capital call statement sent to investors. Output gets copied into the client-facing statement template."
+      }
+    ],
+    "expectedLane": "Lane 2 (Approve-state)",
+    "expectedTier": "Approve",
+    "expectedFailingConditions": [
+      "5.1",
+      "5.2",
+      "5.7"
+    ],
+    "rationale": "Tier is APPROVE: it handles Client/Fund (LP allocation) data AND its output is relied on for a client deliverable (the investor capital-call statement) \u2014 per STAR 3.1 either trigger alone is Approve. THE TIER ALWAYS WINS, so even though it is a single static file with no AI and no network calls, it goes to Lane 2 (Approve-state requires a Controlled Workflow Packet + AI Committee). Mapped to Lane-1 conditions it also concretely fails 5.1 (tier not USE), 5.2 (Client/Fund data, not General), and 5.7 (persists sensitive fund/investor data in localStorage). This is the headline edge case: maximal structural simplicity, maximal tier \u2014 Lane 2 regardless."
+  }
+]
