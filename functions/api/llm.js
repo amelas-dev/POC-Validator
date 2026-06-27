@@ -31,10 +31,13 @@
 // automatically — no reconfig needed. We do NOT fall through on a timeout (don't
 // double-wait a congested model). Pin one explicitly with the CF_AI_MODEL var.
 const DEFAULT_MODELS = [
+  '@cf/mistral/mistral-7b-instruct-v0.2',         // 7B, different family from the gated Meta/Gemma
   '@cf/meta/llama-3.1-8b-instruct-fast',          // fast 8B (speed-optimized)
+  '@cf/meta/llama-3.2-3b-instruct',               // small/fast Llama
+  '@cf/qwen/qwen1.5-7b-chat-awq',                 // 7B Qwen
+  '@cf/microsoft/phi-2',                          // small/fast
   '@cf/meta/llama-3.3-70b-instruct-fp8-fast',     // fast 70B (fp8)
-  '@cf/meta/llama-3-8b-instruct',                  // classic small, widely available
-  '@cf/google/gemma-4-26b-a4b-it',                 // known-accessible Google fallback (slow)
+  '@cf/google/gemma-4-26b-a4b-it',                // known-accessible Google fallback (slow)
 ];
 const DEFAULT_TIMEOUT_MS = 50000;       // fail fast to deterministic instead of hanging ~130s
 const MAX_BODY = 2 * 1024 * 1024;       // mirror server.js's cap on forwarded request size
