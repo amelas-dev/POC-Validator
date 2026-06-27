@@ -72,33 +72,6 @@ function computeView() {
   return { r: withAI, baseline, aiApplied: true, aiHeld: false };
 }
 
-// Which assumption kinds are currently driven by the AI (and APPLIED, i.e. not
-// held back and not overridden by the user) — used to badge those rows as
-// AI-judged rather than blind-assumed.
-function aiDrivenKinds() {
-  const out = new Set();
-  if (!lastView || !lastView.aiApplied) return out;
-  for (const k of Object.keys(aiOverrides)) if (!(k in overrides)) out.add(k);
-  return out;
-}
-
-// Honest trust accounting: a condition with no assumption is read straight from
-// the code; one whose assumption the AI filled is "AI-judged" (NOT proven);
-// one the user set by hand is "you set"; anything still on the engine's blind
-// default is "assumed". This keeps AI inference visibly distinct from code fact.
-function trustCounts(r) {
-  const aiKinds = aiDrivenKinds();
-  let proven = 0, aiJudged = 0, userSet = 0, assumed = 0;
-  for (const c of r.conditions) {
-    if (!c.assumption) { proven++; continue; }
-    const kind = c.assumption.kind;
-    if (kind in overrides) userSet++;
-    else if (aiKinds.has(kind)) aiJudged++;
-    else assumed++;
-  }
-  return { proven, aiJudged, userSet, assumed };
-}
-
 // State lives on the canvas (drives the views) and is mirrored to the shell
 // (drives the analyzing sweep, the New-check button, and the drop hint).
 function setState(s) {
@@ -176,7 +149,6 @@ const ICONS = {
   play: I('<path d="M8 5l11 7-11 7z"/>'),
   volume: I('<path d="M11 5L6 9H3v6h3l5 4z"/><path d="M16 9a3 3 0 0 1 0 6"/>'),
   mute: I('<path d="M11 5L6 9H3v6h3l5 4z"/><path d="M22 9l-6 6M16 9l6 6"/>'),
-  brain: I('<path d="M9 4a2.6 2.6 0 0 0-2.6 2.6c-1.3.2-2.4 1.3-2.4 2.7 0 .7.3 1.4.7 1.9-.5.5-.7 1.1-.7 1.8 0 1.3.9 2.4 2.2 2.7A2.6 2.6 0 0 0 9 20.5c.9 0 1.7-.5 2.1-1.2V5.2A2.6 2.6 0 0 0 9 4z"/><path d="M15 4a2.6 2.6 0 0 1 2.6 2.6c1.3.2 2.4 1.3 2.4 2.7 0 .7-.3 1.4-.7 1.9.5.5.7 1.1.7 1.8 0 1.3-.9 2.4-2.2 2.7A2.6 2.6 0 0 1 15 20.5c-.9 0-1.7-.5-2.1-1.2"/>'),
 };
 
 // Polite screen-reader announcer for the verdict.
@@ -696,15 +668,9 @@ function renderDrawer() {
   }).join('');
 
   const v = VERDICT[OUTCOME[r.verdict.key]];
-  const tc = trustCounts(r);
   const conf = r.confidence || { level: 'high', reasons: [] };
-  const certBlock = `<div class="cert-block">
-      <span class="cert-proven">${ICONS.check} ${tc.proven} read straight from your code</span>
-      ${tc.aiJudged ? `<span class="cert-ai">${ICONS.brain} ${tc.aiJudged} judged by the local AI — adjust any below</span>` : ''}
-      ${tc.userSet ? `<span class="cert-assumed">${tc.userSet} you set by hand</span>` : ''}
-      ${tc.assumed ? `<span class="cert-assumed">${tc.assumed} we had to assume — confirm below</span>` : (!tc.aiJudged && !tc.userSet ? '<span class="cert-assumed">nothing left to assume</span>' : '')}
-      ${conf.level !== 'high' ? `<span class="cert-conf cert-conf-${conf.level}">${conf.level} confidence — ${esc(conf.reasons[0] || '')}</span>` : ''}
-    </div>`;
+  const confBlock = conf.level !== 'high'
+    ? `<div class="cert-block"><span class="cert-conf cert-conf-${conf.level}">${conf.level} confidence — ${esc(conf.reasons[0] || '')}</span></div>` : '';
   const lighten = (r.lighten || []);
   const lightenBlock = lighten.length ? `
     <div class="lighten-block">
@@ -713,10 +679,9 @@ function renderDrawer() {
     </div>` : '';
   $('#drawer-body').innerHTML = `
     <p style="font-size:13px;color:var(--muted);line-height:1.5;margin:10px 0 6px">
-      ${esc(v.headline)} Every check below in plain words — adjust anything we had to assume and the verdict updates.
+      ${esc(v.headline)} Every check below in plain words — adjust anything we had to assume and the read updates.
     </p>
-    ${aiBlockHTML()}
-    ${certBlock}
+    ${confBlock}
     ${lightenBlock}
     ${rows}
     <button class="tech-toggle" id="tech-toggle">Show technical detail</button>
@@ -727,7 +692,6 @@ function renderDrawer() {
   $('#drawer-body').querySelectorAll('.seg button').forEach((b) => b.addEventListener('click', () => {
     setOverride(b.dataset.kind, b.dataset.val); renderResult();   // renderResult refreshes the open dock
   }));
-  $('#ai-apply')?.addEventListener('click', applyAiRead);
   let techOn = false;
   $('#tech-toggle').addEventListener('click', () => {
     techOn = !techOn;
@@ -737,66 +701,12 @@ function renderDrawer() {
   });
 }
 
-// The AI sanity-check block at the top of the dock: the model's INDEPENDENT
-// verdict, how it sits next to the deterministic one, and the per-field reads
-// it contributed. Advisory only — clearly framed as not the decider.
-const AI_FIELD_LABEL = { dataScope: 'Data', reliance: 'Relied on by', writeAuthority: 'Write target', humanReview: 'Reviewed' };
-function aiBlockHTML() {
-  if (aiState === 'running') return `<div class="ai-block ai-block-running">${ICONS.brain} <b>${aiVenue().label}</b> is reading the code… <span class="ai-spin" aria-hidden="true"></span><div class="ai-bk-foot">~10s · ${aiVenue().runs}.</div></div>`;
-  if (aiState === 'failed') return `<div class="ai-block ai-block-failed">${ICONS.brain} ${aiVenue().label} sanity check unavailable. The deterministic check below is unaffected.</div>`;
-  if (aiState !== 'done' || !aiResult) return '';
-  const a = aiAgreement();
-  const held = !!(lastView && lastView.aiHeld);
-  const so = aiResult.secondOpinion;
-  const sugg = aiResult.suggestions || {};
-  const driven = aiDrivenKinds();
-  const fieldRows = ['dataScope', 'reliance', 'writeAuthority', 'humanReview'].map((k) => {
-    const s = sugg[k]; if (!s) return '';
-    const applied = driven.has(k);
-    return `<div class="ai-bk-field">
-      <span class="ai-bk-k">${esc(AI_FIELD_LABEL[k])}</span>
-      <span class="ai-bk-v">${esc(s.value)}${applied ? '' : ' <em>(not applied)</em>'}</span>
-      <span class="ai-bk-why">${esc(s.reason || '')}</span>
-    </div>`;
-  }).join('');
-  const verdictLabel = so ? (FOOT_VERDICT[so.value] || so.value) : '—';
-  const latency = aiResult.latencyMs ? ` · ${(aiResult.latencyMs / 1000).toFixed(1)}s` : '';
-  // When the AI's read is LIGHTER than the deterministic floor we don't apply it.
-  // It's offered as an explicit choice — applying it is a trusted human decision.
-  const heldBanner = held
-    ? `<div class="ai-held">The local AI reads this <b>lighter</b> than the strict check, so it’s <b>not applied</b> — the safer deterministic verdict stands. Since the code it read is untrusted, only you can accept a lighter read.
-         <button class="ai-apply" id="ai-apply">Use the AI’s read (you decide)</button></div>` : '';
-  const v = aiVenue();
-  const foot = held
-    ? `The deterministic engine decides; a lighter AI read is never applied on its own. ${v.priv}`
-    : `Advisory only — it fills the assumptions below; the deterministic engine still decides, and you can override any value. ${v.priv}`;
-  return `<div class="ai-block ai-${held ? 'lighter' : (a ? a.kind : 'agree')}">
-    <div class="ai-bk-head">${ICONS.brain} ${v.label} sanity check <span class="ai-bk-model">${esc(aiResult.model)} · ${v.at}${latency}</span></div>
-    ${so ? `<div class="ai-bk-verdict">Independent read: <b>${esc(verdictLabel)}</b>${a ? ` — ${esc(a.text.replace(/^(?:Local|Cloud) AI /, ''))}` : ''}</div>` : ''}
-    ${so && so.reason ? `<div class="ai-bk-reason">“${esc(so.reason)}”</div>` : ''}
-    ${heldBanner}
-    ${fieldRows ? `<div class="ai-bk-fields">${fieldRows}</div>` : ''}
-    <div class="ai-bk-foot">${foot}</div>
-  </div>`;
-}
-
-// The user explicitly accepts the AI's lighter read: promote its suggestions to
-// USER overrides (a trusted human decision), so the verdict re-resolves with them.
-function applyAiRead() {
-  if (!aiResult) return;
-  Object.assign(overrides, mapAiToOverrides(aiResult));
-  renderResult();
-  if (shell.dataset.dock === 'open') renderDrawer();
-}
-
+// An adjustable assumption row: the question + the choices, with the current read
+// selected. Presented as the app's own read — no model attribution, no badges.
+// Changing a value is the user's call and re-resolves the verdict instantly.
 function assumeHTML(a) {
   const opts = a.options.map((o) => `<button data-kind="${esc(a.kind)}" data-val="${esc(o.value)}" class="${o.value === a.value ? 'on' : ''}">${esc(o.label)}</button>`).join('');
-  const aiDriven = aiDrivenKinds().has(a.kind);
-  const sugg = aiResult && aiResult.suggestions && aiResult.suggestions[a.kind];
-  const badge = aiDriven ? `<span class="ai-badge" title="Set by the local model — adjust to override">${ICONS.brain} AI</span>` : '';
-  const why = (aiDriven && sugg && sugg.reason)
-    ? `<div class="ai-assume-why"><b>${aiVenue().label}:</b> ${esc(sugg.reason)}</div>` : '';
-  return `<div class="assume"><span class="q">${esc(QLABEL[a.kind] || 'Assumed')}</span><span class="seg">${opts}</span>${badge}</div>${why}`;
+  return `<div class="assume"><span class="q">${esc(QLABEL[a.kind] || 'Assumed')}</span><span class="seg">${opts}</span></div>`;
 }
 
 // ============================================================================
@@ -864,21 +774,19 @@ function applyTheme(mode) {
 // ============================================================================
 //  Settings — a full overlay with a section sidebar. One registry row per
 //  section; each renders its own pane. The header quick-menu and this page share
-//  the SAME theme/AI controls (class-based sync in applyTheme/syncAIToggle), so
-//  the two never drift. Adding a section = one row in SETTINGS_SECTIONS.
+//  the SAME theme controls (class-based sync in applyTheme), so the two never
+//  drift. Adding a section = one row in SETTINGS_SECTIONS.
 // ============================================================================
 const APP_VERSION = '1.0.0';
 
 const SET_ICON = {
   appearance: '<circle cx="12" cy="12" r="4"/><path d="M12 3v2M12 19v2M21 12h-2M5 12H3M18.4 5.6l-1.4 1.4M7 17l-1.4 1.4M18.4 18.4 17 17M7 7 5.6 5.6"/>',
-  ai: '<path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z"/><circle cx="18" cy="17.5" r="1.5"/>',
   privacy: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/>',
   about: '<circle cx="12" cy="12" r="9"/><path d="M12 11.5v5"/><circle cx="12" cy="7.8" r="1" fill="currentColor" stroke="none"/>',
 };
 
 const SETTINGS_SECTIONS = [
   { id: 'appearance', label: 'Appearance',      render: renderSetAppearance },
-  { id: 'ai',         label: 'AI assist',       render: renderSetAI },
   { id: 'privacy',    label: 'Privacy & data',  render: renderSetPrivacy },
   { id: 'about',      label: 'About',           render: renderSetAbout },
 ];
@@ -925,7 +833,6 @@ function buildSettings() {
     // carries data-theme when a theme is locked, swallowing every other click here
     const themeBtn = e.target.closest('button[data-theme]');
     if (themeBtn) { applyTheme(themeBtn.dataset.theme); return; }
-    if (e.target.closest('.ai-toggle')) { toggleAI(); return; }
     const act = e.target.closest('[data-act]')?.dataset.act;
     if (act === 'clear-recents') { store.set('recents', []); renderSidebar(); renderSettingsBody(); }
     else if (act === 'open-playbook') { closeSettings(); setBottom(true); }
@@ -966,7 +873,6 @@ function renderSettingsBody() {
   host.scrollTop = 0;
   // re-sync the shared controls so the freshly rendered pane reflects live state
   applyTheme(store.get('theme', 'auto'));
-  syncAIToggle();
 }
 
 function renderSetAppearance() {
@@ -990,40 +896,18 @@ function renderSetAppearance() {
     </div>`;
 }
 
-function renderSetAI() {
-  return `
-    <div class="set-pane">
-      <h3 class="set-h">AI assist</h3>
-      <p class="set-sub">An optional second opinion, off by default. The deterministic engine always makes the call — AI can only add caution, never remove it.</p>
-      <div class="set-card">
-        <div class="set-row">
-          <div class="set-rl">
-            <div class="set-rt">Enable AI assist</div>
-            <div class="set-rd">Fills the four judgment calls the code can’t prove, plus an independent read of the lane.</div>
-          </div>
-          <button class="ai-toggle" type="button" role="switch" aria-checked="false" disabled>
-            <span class="ai-tg-track" aria-hidden="true"><span class="ai-tg-thumb"></span></span>
-            <span class="ai-tg-txt">Off</span>
-          </button>
-        </div>
-        <div class="set-row set-row-foot">
-          <p class="ai-hint set-hint">Checking for an AI model…</p>
-        </div>
-      </div>
-    </div>`;
-}
-
 function renderSetPrivacy() {
   const n = store.get('recents', []).length;
+  const local = (aiAvailable && aiAvailable.provider) === 'local';
   return `
     <div class="set-pane">
       <h3 class="set-h">Privacy &amp; data</h3>
-      <p class="set-sub">Lane runs entirely in your browser. There is no account and nothing is stored on a server.</p>
+      <p class="set-sub">There is no account, and your code is only ever read to score it — never changed.</p>
       <div class="set-card">
         <div class="set-row">
           <div class="set-rl">
-            <div class="set-rt">On-device only</div>
-            <div class="set-rd">Your code is read and scored locally — nothing is uploaded.</div>
+            <div class="set-rt">${local ? 'On-device' : 'Read-only'}</div>
+            <div class="set-rd">${local ? 'Your code is read on this device and is not uploaded.' : 'Your code is read to score it, then discarded — never stored.'}</div>
           </div>
           <span class="set-badge">Read-only</span>
         </div>
@@ -1080,19 +964,15 @@ function resetFooter() {
   shell.removeAttribute('data-outcome');
   const fv = $('#foot-verdict');
   fv.dataset.kind = 'privacy';
-  fv.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg><span class="foot-txt">Read-only · checked in your browser, never uploaded.</span>`;
+  fv.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg><span class="foot-txt">${esc(privacyLine())}</span>`;
   $('#foot-conf').textContent = '';
 }
 
 // ---- recents (the History seam) — a lightweight record per check, never code -
 function recordCheck(r) {
   if (!r) return;
-  // Use the same honest accounting as the card/dock so a check reads identically
-  // in History (proven = read from code; everything else counts as assumed).
-  const tc = trustCounts(r);
   const list = store.get('recents', []);
   list.unshift({ slug: slugOf(r), source: r.meta.source, verdict: r.verdict.key,
-    proven: tc.proven, assumed: tc.aiJudged + tc.userSet + tc.assumed,
     confidence: (r.confidence || {}).level || 'high' });
   store.set('recents', list.slice(0, 50));
   if (shell.dataset.side === 'open') renderSidebar();
@@ -1129,50 +1009,19 @@ function renderSidebar() {
   }
   host.innerHTML = list.map((r) => `<div class="recent" role="listitem" data-v="${esc(r.verdict)}">
       <span class="rdot" aria-hidden="true"></span>
-      <span class="rtx"><span class="rslug">${esc(r.slug)}</span><span class="rmeta">${esc(RECENT_LABEL[r.verdict] || '')} · ${r.proven} read · ${r.assumed} assumed</span></span>
+      <span class="rtx"><span class="rslug">${esc(r.slug)}</span><span class="rmeta">${esc(RECENT_LABEL[r.verdict] || '')}${r.confidence && r.confidence !== 'high' ? ` · ${esc(r.confidence)} confidence` : ''}</span></span>
     </div>`).join('')
     + `<button class="side-clear" id="side-clear" type="button">Clear history</button>`;
   $('#side-clear')?.addEventListener('click', () => { store.set('recents', []); renderSidebar(); });
 }
 
-// ---- local-AI assist control -----------------------------------------------
-// Probe whether a local model is reachable, reflect it in the toggle, and never
-// let the probe throw — the app must work identically with no model present.
-async function initAI() {
-  syncAIToggle();                        // reflect the stored pref immediately
-  aiAvailable = await checkAvailable();  // ask the same-origin proxy / Ollama
-  syncAIToggle();
-}
-function syncAIToggle() {
-  const reachable = !!(aiAvailable && aiAvailable.available);
-  const on = aiEnabled && reachable;
-  // every AI toggle on the page (header quick-menu + settings page) stays in sync
-  document.querySelectorAll('.ai-toggle').forEach((btn) => {
-    btn.disabled = !reachable;
-    btn.setAttribute('aria-checked', String(on));
-    btn.classList.toggle('on', on);
-    const txt = btn.querySelector('.ai-tg-txt'); if (txt) txt.textContent = on ? 'On' : 'Off';
-  });
-  const hint = (aiAvailable == null) ? 'Checking for an AI model…'
-    : !aiAvailable.ollama ? (aiAvailable.provider
-        ? 'AI assist isn’t configured on the server yet.'
-        : 'No local model found. Start Ollama to enable an on-device second opinion.')
-    : !reachable ? `Ollama is running, but ${DEFAULT_MODEL} isn’t pulled (ollama pull ${DEFAULT_MODEL}).`
-    : `Ready · ${aiVenue().ready}.`;
-  document.querySelectorAll('.ai-hint').forEach((el) => { el.textContent = hint; });
-}
-function toggleAI() {
-  if (!(aiAvailable && aiAvailable.available)) return;
-  aiEnabled = !aiEnabled;
-  store.set('ai.enabled', aiEnabled);
-  syncAIToggle();
-  if (!aiEnabled) {                       // turning off → drop AI influence entirely
-    if (aiAbort) aiAbort.abort();
-    aiRunId++; aiState = 'off'; aiResult = null; aiOverrides = {};
-    if (card.dataset.state === 'result') { renderResult(); if (shell.dataset.dock === 'open') renderDrawer(); }
-  } else if (card.dataset.state === 'result' && corpus) {
-    startAdvisor();                       // turning on with a result up → run it now
-  }
+// Learn where the read will run (local vs hosted) so the privacy line can be
+// phrased honestly. Purely informational — nothing gates on it; the read always
+// runs, and the server routes to whatever backend is reachable. Never throws.
+async function initRead() {
+  try { aiAvailable = await checkAvailable(); } catch { aiAvailable = null; }
+  if (card.dataset.state === 'input') resetFooter();   // refresh the idle privacy line
+  if (setOverlay && !setOverlay.hidden && setActive === 'privacy') renderSettingsBody();
 }
 
 // ---- wire the shell once ---------------------------------------------------
@@ -1194,9 +1043,8 @@ function initShell() {
   $('#dock-toggle')?.addEventListener('click', closeDrawer);
   $('#playbook-link')?.addEventListener('click', (e) => { e.preventDefault(); setBottom(true); });
 
-  // local-AI assist availability probe (the toggle now lives on the Settings page,
-  // wired via delegation in buildSettings)
-  initAI();
+  // learn where the read runs (local vs hosted) so the privacy line is honest
+  initRead();
 
   // expandable panels — left sidebar · bottom drawer · right dock
   renderSidebar();
