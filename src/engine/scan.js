@@ -44,7 +44,13 @@ function fileRole(path) {
   if (/(^|\/)(readme|changelog|contributing|license|notice)/.test(p) || /\.(md|markdown|rst|adoc)$/.test(p)) return 'doc';
   if (/(^|\/)(tests?|spec|__tests__|__mocks__|e2e|cypress)\//.test(p) || /\.(test|spec)\.[a-z]+$/.test(p)) return 'test';
   if (/(^|\/)(package\.json|package-lock\.json|requirements\.txt|pipfile|pyproject\.toml|gemfile|go\.mod|cargo\.toml)$/.test(base) || base === 'package.json') return 'manifest';
-  if (/\.(txt|csv)$/.test(p)) return 'note';
+  // Spreadsheet runtime artifacts (extracted VBA / formulas / connections / Power Query /
+  // macro sheets) are the "tool" inside a workbook — they must be 'runtime' so the
+  // RUNTIME_SCOPED signals (outbound, direct AI, …) can fire on them. Placed AHEAD of the
+  // .txt/.csv -> note rule on purpose; the extractor never emits these as .txt/.csv.
+  if (/\.(vba|bas|cls|frm|m|pq|formulas|defnames|xllinks|xlm)$/.test(p)) return 'runtime';
+  if (/(^|\/)(vba|formulas|powerquery|connections|names|links|macrosheets)\//.test(p)) return 'runtime';
+  if (/\.(txt|csv|tsv)$/.test(p)) return 'note';  // keep — a plain CSV / TSV / .txt is inert data
   return 'runtime';
 }
 
@@ -62,6 +68,13 @@ function commentStyle(path) {
   if (['html', 'htm', 'vue', 'svelte', 'xml', 'md', 'markdown'].includes(e)) return { line: [], block: [['<!--', '-->']] };
   if (['py', 'rb', 'sh', 'bash', 'yml', 'yaml', 'toml', 'ini', 'conf', 'cfg', 'env', 'r', 'tf', 'tfvars', 'properties'].includes(e)) return { line: ['#'], block: [] };
   if (['sql', 'graphql', 'gql'].includes(e)) return { line: ['--'], block: [['/*', '*/']] };
+  // VBA: ' starts a comment; so does the "Rem" keyword (handled case-insensitively in
+  // stripComments). The ONLY string delimiter is " (handled in stripComments).
+  if (['vba', 'bas', 'cls', 'frm'].includes(e)) return { line: ["'"], block: [] };
+  // Power Query (M): // line + /* */ block; strings are " only.
+  if (['m', 'pq'].includes(e)) return { line: ['//'], block: [['/*', '*/']] };
+  // Extracted formula/name/link listings: no comments; ' is sheet-quoting, not a string.
+  if (['formulas', 'defnames', 'xllinks', 'xlm'].includes(e)) return { line: [], block: [] };
   return { line: ['//'], block: [['/*', '*/']] }; // js/ts/jsx/tsx/java/go/rs/c/cs/php/…
 }
 
@@ -70,15 +83,25 @@ function commentStyle(path) {
 // `//` inside "https://…" is never mistaken for a comment.
 export function stripComments(path, text) {
   const { line, block } = commentStyle(path);
+  const e = extOf(path);
+  // VBA / Power Query / extracted-formula files use ONLY " for strings — ' is a comment
+  // (VBA) or sheet-quoting (formulas), never a string opener — and have no \ escape. For
+  // every other language the original "/'/` string behaviour (with \ escapes) is kept.
+  const dquoteOnly = ['vba', 'bas', 'cls', 'frm', 'm', 'pq', 'formulas', 'defnames', 'xllinks', 'xlm'].includes(e);
+  const vbaRem = ['vba', 'bas', 'cls', 'frm'].includes(e);  // the VBA `Rem` comment keyword
   const out = text.split('');
   const n = text.length;
   const blank = (a, b) => { for (let k = a; k < b && k < n; k++) if (out[k] !== '\n') out[k] = ' '; };
   let i = 0, str = null;
   while (i < n) {
     const ch = text[i];
-    if (str) { if (ch === '\\') { i += 2; continue; } if (ch === str) str = null; i++; continue; }
-    if (ch === '"' || ch === "'" || ch === '`') { str = ch; i++; continue; }
+    if (str) { if (!dquoteOnly && ch === '\\') { i += 2; continue; } if (ch === str) str = null; i++; continue; }
+    if (dquoteOnly ? ch === '"' : (ch === '"' || ch === "'" || ch === '`')) { str = ch; i++; continue; }
     let hit = false;
+    // VBA `Rem` comment (case-insensitive) at a statement start: Rem/REM/rem + space/tab.
+    if (vbaRem && (i === 0 || !/\w/.test(text[i - 1])) && /^rem[ \t]/i.test(text.substr(i, 4))) {
+      const nl = text.indexOf('\n', i); const stop = nl < 0 ? n : nl; blank(i, stop); i = stop; continue;
+    }
     for (const [op, cl] of block) {
       if (text.startsWith(op, i)) { const e = text.indexOf(cl, i + op.length); const stop = e < 0 ? n : e + cl.length; blank(i, stop); i = stop; hit = true; break; }
     }

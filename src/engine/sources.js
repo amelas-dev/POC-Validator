@@ -12,8 +12,10 @@ const TEXT_EXT = new Set([
   'js', 'mjs', 'cjs', 'jsx', 'ts', 'tsx', 'vue', 'svelte', 'html', 'htm', 'css',
   'scss', 'sass', 'less', 'json', 'jsonc', 'json5', 'yml', 'yaml', 'toml', 'ini',
   'env', 'py', 'rb', 'php', 'go', 'rs', 'java', 'kt', 'cs', 'sh', 'bash', 'ps1',
-  'sql', 'graphql', 'gql', 'md', 'markdown', 'txt', 'csv', 'xml', 'r', 'ipynb',
+  'sql', 'graphql', 'gql', 'md', 'markdown', 'txt', 'csv', 'tsv', 'xml', 'r', 'ipynb',
   'cfg', 'conf', 'dockerfile', 'tf', 'tfvars', 'gradle', 'properties', 'bicep',
+  // Spreadsheet-extracted artifacts (so they survive a zip/folder upload too).
+  'bas', 'cls', 'frm', 'vba', 'm', 'pq', 'formulas', 'defnames', 'xllinks', 'xlm',
 ]);
 
 // Filenames (no extension) that are meaningful config/signal carriers.

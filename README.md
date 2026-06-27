@@ -1,7 +1,12 @@
 # Lane — POC Governance Validator
 
-Drop in a GitHub URL or code files and instantly see which **Lane** a POC is under
-your organisation's *Employee-Built Utility Triage & Hosting Playbook* — and exactly **why**.
+Drop in a GitHub URL, code files, or a **spreadsheet** (`.xlsm` / `.xlsx` / `.xlsb` /
+`.xls` / `.csv`) and instantly see which **Lane** a POC is under your organisation's
+*Employee-Built Utility Triage & Hosting Playbook* — and exactly **why**.
+
+Accountants build real tools inside workbooks — VBA macros, Power Query, formulas,
+live data connections. Lane reaches **inside** a workbook, extracts that tool, and
+triages it with the **same rigor** as source code.
 
 - **Lane 1 — Host as-is** (Shared Hosting): meets every §5 condition.
 - **Lane 2 — Developer-built** (Isolated Hosting): fails any §5 condition.
@@ -59,6 +64,33 @@ Facts code **cannot** prove — is the data really Client/Fund? who relies on th
 output? is a write target authoritative? — are auto-defaulted, shown as adjustable
 assumptions on the relevant condition rows, and the verdict re-resolves instantly
 when you correct them.
+
+### Workbooks & macros
+
+Drop in an Excel workbook and Lane extracts the **tool inside** it, turning each piece
+into a synthetic source file that flows through the *same* scanner and classifier:
+
+- **VBA macros** — a self-contained OLE2 (compound-file) reader + MS-OVBA decompressor
+  (vendored-dependency-free, validated byte-for-byte against `olevba`) pulls every
+  module's real source. A macro that **shells out**, imports **Win32**, calls an **AI
+  vendor**, opens an **ADODB/ODBC** connection, **emails via Outlook**, or **saves to a
+  network share** is triaged exactly like the equivalent code.
+- **Cell formulas** — `WEBSERVICE`/`FILTERXML`, `RTD`, external-workbook links, and DDE
+  (`=cmd|…`) are surfaced; a pure `VLOOKUP`/`SUMIFS` sheet stays Lane 1.
+- **Power Query (M)** — `Sql.Database`, `Odbc`/`OleDb`, `Web.Contents`, `SharePoint.*` —
+  a **live external data connection** (§6) → Lane 2, and a `Value.NativeQuery` write → Approve.
+- **External data connections** — `connections.xml` ODBC/OLEDB/web queries; a `SELECT`
+  feed is a live connection (Lane 2), an `INSERT/UPDATE/MERGE` is a system-of-record
+  write (Approve).
+- **Excel-4.0 (XLM) macros** — `EXEC`/`CALL`/`REGISTER` execution.
+- **CSV** is treated as data, not a tool — except formula/DDE-injection cells
+  (`=`/`+`/`-`/`@`, `=cmd|…`), which are surfaced as a risk.
+
+A new §6 **live-data-connection** check distinguishes a workbook that reaches a live
+external source (Lane 2) from one that runs a real server — without falsely claiming
+a server. If a macro project is present but **unreadable** (password-protected, stomped,
+or corrupt), Lane defaults cautiously to Lane 2 — it can't clear what it can't read.
+All of this runs locally; nothing is uploaded.
 
 ### Precision (deterministic, no AI)
 
@@ -176,18 +208,25 @@ src/engine/
   scan.js               regex scan -> evidence (file:line), runtime-scoped
   classify.js           two-step triage + verdict precedence
   sources.js            GitHub URL / folder / .zip / files / paste loaders
+  spreadsheet.js        workbook reader: OLE2/CFB + MS-OVBA VBA, formulas, Power Query,
+                        connections, Excel-4 macros, CSV -> the same corpus shape
   index.js              public API
 src/vendor/jszip.min.js vendored locally (no external CDN script)
 test/
-  corpus.json           35-case corpus (20 governance + 5 accuracy + 10 adversarial)
-  run.mjs               replays the corpus through the engine
+  corpus.json           code corpus (governance + accuracy + adversarial)
+  run.mjs               replays the corpus through the engine (48/48 primary)
+  spreadsheet.mjs       spreadsheet suite (32 cases incl. a real .xlsm CFB/OVBA round-trip)
+  fixtures/             tiny base64 .xlsm / vbaProject.bin for the round-trip test
+  tools/                dev-only Python: regeneratable fixtures, olevba cross-validation
   pressure.mjs          triangulates agent-generated cases: engine vs 2 blind judges
 ```
 
 ## Test
 
 ```bash
-node test/run.mjs        # 35/35 on the Lane 1 vs Lane 2 decision
+npm test                 # runs both suites below
+node test/run.mjs        # 48/48 on the Lane 1 vs Lane 2 decision (code corpus)
+node test/spreadsheet.mjs   # 32/32 spreadsheet cases (VBA/formula/PQ/connection/CSV)
 node test/run.mjs -v     # verbose, per-case
 node test/pressure.mjs test/pressure-cases.json   # adversarial triangulation
 ```

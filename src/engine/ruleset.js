@@ -229,4 +229,79 @@ export const SIGNALS = [
     confidence: "strong",
     patterns: ["(derived from: data-scope-restricted-keywords)", "(derived from: db-source-of-truth-write)", "(derived from: backend-as-a-service-write)", "(derived from: reliance-deliverable-markers)"],
   },
+
+  // ── Spreadsheet-native signals (VBA macros / formulas / Power Query / connections) ──
+  // These provide human-readable EVIDENCE for the audit drawer. The verdict-driving facts
+  // are derived in classify.js (scoped to spreadsheet artifacts), but matching evidence here
+  // lets the "show me where" panel point at the exact macro line / formula / connection.
+  {
+    id: "vba-os-integration",
+    label: "VBA shells out / imports Win32 / touches the registry",
+    why: "Section 6: a macro that runs OS commands (Shell / WScript.Shell), imports a Win32 DLL (Declare … Lib), or edits the registry isn't a static front-end — it needs an isolated environment. NOT in-workbook Application.Run and NOT read-only file checks.",
+    mapsTo: "backend-needed", effect: "fails-lane1-condition", confidence: "strong",
+    patterns: ["\\bShell\\s*\\(", "\\bShell\\s+['\"][^'\"\\n]*\\.(exe|cmd|bat|ps1|vbs)", "CreateObject\\s*\\(\\s*['\"](WScript\\.Shell|WshShell|Shell\\.Application)['\"]", "\\bDeclare\\s+(PtrSafe\\s+)?(Function|Sub)\\s+\\w+\\s+Lib\\s+['\"]", "\\b(URLDownloadToFile[AW]?|ShellExecute[AW]?|WinExec|CreateProcess[AW]?)\\b", "\\.(RegWrite|RegDelete)\\b", "GetObject\\s*\\(\\s*['\"]winmgmts:", "\\bWin32_Process\\b"],
+  },
+  {
+    id: "vba-live-data-connection",
+    label: "VBA opens a live database connection (ADODB / OLEDB / ODBC)",
+    why: "Section 6: an ADODB/OLEDB/ODBC connection to a live database is a live data connection / integration → Lane 2. A mutating SQL statement through it (INSERT/UPDATE/DELETE) additionally fails §5.3 → Approve.",
+    mapsTo: "backend-needed", effect: "fails-lane1-condition", confidence: "strong",
+    patterns: ["CreateObject\\s*\\(\\s*['\"]ADODB\\.(Connection|Recordset|Command)['\"]", "New\\s+ADODB\\.(Connection|Recordset|Command)", "Provider\\s*=\\s*(SQLOLEDB|MSDASQL|Microsoft\\.ACE\\.OLEDB|MSDAORA)", "\\bDSN\\s*=\\s*\\w", "Initial\\s*Catalog\\s*=", "Data\\s*Source\\s*=\\s*[A-Za-z\\\\]"],
+  },
+  {
+    id: "pq-live-data-connection",
+    label: "Power Query pulls from a live external source",
+    why: "Section 6: a Power Query (M) source such as Sql.Database / Odbc.DataSource / OleDb.DataSource / Oracle.Database is a live data connection → Lane 2.",
+    mapsTo: "backend-needed", effect: "fails-lane1-condition", confidence: "strong",
+    patterns: ["\\b[A-Za-z][\\w.]*\\.Databases?\\s*\\(", "Odbc\\.(DataSource|Query)\\s*\\(", "OleDb\\.DataSource\\s*\\(", "Snowflake\\.\\w+\\s*\\(", "(Web\\.Contents|OData\\.Feed|SharePoint\\.(Files|Contents|Tables))\\s*\\("],
+  },
+  {
+    id: "connections-external-data",
+    label: "Workbook external data connection",
+    why: "Section 6: a stored workbook connection (connections.xml dbPr/olapPr/webPr, or a query table) is a live data connection / integration → Lane 2; its command text may also write (§5.3).",
+    mapsTo: "backend-needed", effect: "fails-lane1-condition", confidence: "moderate",
+    patterns: ["<(dbPr|olapPr|webPr)\\b", "connectionId\\s*=", "<queryTable\\b", "odc(file)?\\b"],
+  },
+  {
+    id: "vba-outlook-email",
+    label: "VBA sends email / data out via Outlook or CDO",
+    why: "Section 5.6: automating Outlook.Application / CDO.Message to send mail moves data outside the workbook to an external service → Lane 2 (and may carry a client deliverable → Approve).",
+    mapsTo: "5.6", effect: "fails-lane1-condition", confidence: "moderate",
+    patterns: ["CreateObject\\s*\\(\\s*['\"](Outlook\\.Application|CDO\\.Message|Redemption\\.\\w+)['\"]", "New\\s+Outlook\\.Application", "\\.CreateItem\\s*\\(\\s*(0|olMailItem)"],
+  },
+  {
+    id: "vba-network-share-write",
+    label: "VBA saves / copies to a network share",
+    why: "STAR 3.1 Register: writing or copying output to a \\\\server network share implies others consume it (shared / repeatable) → Lane 2, and the data leaves the desktop boundary.",
+    mapsTo: "risk-tier-register", effect: "context-needed", confidence: "moderate",
+    patterns: ["(SaveAs|SaveCopyAs|FileCopy)\\b[^\\n]*['\"]\\\\\\\\[\\w.$-]+\\\\", "['\"]\\\\\\\\[\\w.$-]+\\\\[^'\"\\n]+\\.(xls[xmb]?|csv|txt|pdf|xml|json)['\"]"],
+  },
+  {
+    id: "spreadsheet-web-outbound",
+    label: "Macro / query reaches an outside web service",
+    why: "Section 5.6: a VBA HTTP object (MSXML2.XMLHTTP / WinHttp), a Power Query Web.Contents / SharePoint / OData source, or a Win32 download API makes an outbound network call to a host outside the same-origin allowlist → Lane 2 (and §5.5 direct AI if the host is an AI vendor). The verdict-driving fact is computed scoped to spreadsheet artifacts in classify.js; this signal supplies the matching evidence.",
+    mapsTo: "5.6", effect: "fails-lane1-condition", confidence: "moderate",
+    patterns: ["(MSXML2\\.(XMLHTTP|ServerXMLHTTP)|WinHttp\\.WinHttpRequest|Microsoft\\.XMLHTTP)", "\\.Open\\s+['\"]?(GET|POST|PUT|PATCH|DELETE)['\"]?\\s*,\\s*['\"`]https?://(?!([a-z0-9.-]*\\.)?gpfundsolutions\\.com)", "(Web\\.Contents|OData\\.Feed|SharePoint\\.(Files|Contents|Tables))\\s*\\(", "\\b(URLDownloadToFile[AW]?|InternetOpenUrl[AW]?|WinHttpOpen)\\b"],
+  },
+  {
+    id: "formula-web-call",
+    label: "Formula calls an outside service / external workbook",
+    why: "Section 5.6: =WEBSERVICE/=FILTERXML and RTD() reach an external service, and links into another workbook or a \\\\share are external data dependencies → Lane 2.",
+    mapsTo: "5.6", effect: "fails-lane1-condition", confidence: "moderate",
+    patterns: ["=?\\s*WEBSERVICE\\s*\\(", "=?\\s*FILTERXML\\s*\\(", "\\bRTD\\s*\\(", "=cmd\\s*\\|", "\\\\\\\\[\\w.$-]+\\\\[^'\"\\n]+\\.(xls[xmb]?)"],
+  },
+  {
+    id: "excel4-macro-exec",
+    label: "Excel-4.0 (XLM) macro runs commands / DLL calls",
+    why: "Section 6 / 5.5: legacy Excel-4 macro sheets using EXEC/CALL/REGISTER/FOPEN execute OS commands or call DLLs — a classic abuse vector, never a static-host-safe utility → Lane 2.",
+    mapsTo: "backend-needed", effect: "fails-lane1-condition", confidence: "strong",
+    patterns: ["=?\\s*EXEC\\s*\\(", "=?\\s*REGISTER\\s*\\(", "=?\\s*FOPEN\\s*\\(", "=?\\s*FWRITE(LN)?\\s*\\("],
+  },
+  {
+    id: "vba-present-unreadable",
+    label: "Macros present but unreadable",
+    why: "A VBA project is present but its source could not be read (password-protected, stomped, or corrupt). Code analysis cannot clear what it cannot read, so the cautious default is Lane 2 — a developer / manual review is required.",
+    mapsTo: "backend-needed", effect: "context-needed", confidence: "moderate",
+    patterns: ["VBA_PROJECT_PRESENT_UNREADABLE"],
+  },
 ];

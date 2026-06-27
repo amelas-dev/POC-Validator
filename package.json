@@ -3,10 +3,10 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Lane — POC Validator. Drop in a GitHub URL or code files and instantly see which governance Lane a POC is, and why.",
+  "description": "Lane — POC Validator. Drop in a GitHub URL, code files, or a spreadsheet (xlsm/xlsx/csv) and instantly see which governance Lane a POC is, and why.",
   "scripts": {
     "start": "node server.js",
-    "test": "node test/run.mjs"
+    "test": "node test/run.mjs && node test/spreadsheet.mjs"
   },
   "author": "Lane — POC Validator",
   "license": "UNLICENSED"

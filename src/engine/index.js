@@ -7,3 +7,6 @@ export { SIGNALS } from './ruleset.js';
 export {
   parseGitHubUrl, loadFromGitHub, loadFromFileList, loadFromZip, loadFromPaste,
 } from './sources.js';
+export {
+  loadFromSpreadsheet, isSpreadsheet, extractVbaModules, extractFormulas, csvToArtifacts,
+} from './spreadsheet.js';

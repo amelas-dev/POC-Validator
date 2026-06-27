@@ -6,6 +6,7 @@ import { extractFacts, resolve } from './engine/classify.js';
 import {
   parseGitHubUrl, loadFromGitHub, loadFromFileList, loadFromZip, loadFromPaste,
 } from './engine/sources.js';
+import { loadFromSpreadsheet, isSpreadsheet } from './engine/spreadsheet.js';
 import { runAdvisor, checkAvailable, DEFAULT_MODEL } from './llm/advisor.js';
 
 const $ = (s) => document.querySelector(s);
@@ -226,7 +227,13 @@ if (exBtn) exBtn.addEventListener('click', () => run(() => Promise.resolve(loadF
 // One quiet picker for non-droppers (files; folders & .zip come in by drag).
 const on = (id, evt, fn) => { const el = document.getElementById(id); if (el) el.addEventListener(evt, fn); };
 on('pick-files', 'click', () => $('#file-input').click());
-on('file-input', 'change', (e) => e.target.files.length && run(() => loadFromFileList(e.target.files, setPhase)));
+on('file-input', 'change', (e) => {
+  const fl = e.target.files; if (!fl.length) return;
+  // A single workbook/CSV goes through the spreadsheet reader (extract the tool inside);
+  // anything else (code files, multi-select) takes the normal file-list path.
+  if (fl.length === 1 && isSpreadsheet(fl[0].name)) run(() => loadFromSpreadsheet(fl[0], setPhase));
+  else run(() => loadFromFileList(fl, setPhase));
+});
 on('folder-input', 'change', (e) => e.target.files.length && run(() => loadFromFileList(e.target.files, setPhase)));
 on('zip-input', 'change', (e) => e.target.files[0] && run(() => loadFromZip(e.target.files[0], setPhase)));
 
@@ -241,6 +248,7 @@ window.addEventListener('drop', async (e) => {
   const dir = items.map((i) => i.webkitGetAsEntry && i.webkitGetAsEntry()).find((en) => en && en.isDirectory);
   if (dir) { run(() => corpusFromEntry(dir)); return; }
   const files = Array.from(dt.files || []);
+  if (files.length === 1 && isSpreadsheet(files[0].name)) { run(() => loadFromSpreadsheet(files[0], setPhase)); return; }
   if (files.length === 1 && /\.zip$/i.test(files[0].name)) { run(() => loadFromZip(files[0], setPhase)); return; }
   if (files.length) run(() => loadFromFileList(files, setPhase));
 });

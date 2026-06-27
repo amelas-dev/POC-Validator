@@ -75,7 +75,9 @@ const PROXY_DEST = /['"`]\/api\//;
 // A real client deliverable means an actual document-generation LIBRARY produced
 // an artifact — not just a function NAMED generateReport / exportToPdf (reliance
 // is un-inferable; a name must not auto-escalate to Approve).
-const STRONG_RELIANCE_EXPORT = /(jspdf|pdfkit|exceljs|xlsx\.(write|writeFile)|pptxgenjs|\bdocx\b|html2pdf|html2canvas|puppeteer|officegen|carbone)/i;
+// Note `(?<!\.)\bdocx\b` matches the `docx` LIBRARY but not a bare `report.docx` filename
+// (which a VBA macro routinely writes without it being a relied-on client deliverable).
+const STRONG_RELIANCE_EXPORT = /(jspdf|pdfkit|exceljs|xlsx\.(write|writeFile)|pptxgenjs|(?<!\.)\bdocx\b|html2pdf|html2canvas|puppeteer|officegen|carbone)/i;
 // Sharing/reliance is mostly un-inferable from code; only fire on unambiguous
 // markers. (Deliberately NOT `role:` — that collides with chat message roles.)
 const STRONG_RELIANCE_SHARE = /(node-cron|cron\.schedule|@nestjs\/schedule|crontab|"bin"\s*:|#!\/usr\/bin\/env\s+node|\bargparse\b|click\.command|\bisAdmin\b|hasRole\s*\(|\b(colleagues|team\s*drive|other\s+users|multi[-\s]user|shared\s+with|for\s+the\s+team|the\s+(ap|ops|finance|accounting|sales)\s+team|everyone\s+(uses|on))\b)/i;
@@ -130,7 +132,7 @@ const METHOD_WRITE = /method\s*:\s*['"`](put|patch|delete)['"`]/i;
 // not a mutation, so it must not read as a write (a `mysql://` URL is still caught
 // by the explicit `://` token, and an imported driver like `mysql2`/`psycopg2`
 // still matches because it isn't followed by a colon).
-const DB_ORM_WRITE = /(insert\s+into|update\s+\w+\s+set|delete\s+from|upsert|merge\s+into|create\s+table|alter\s+table|prisma\.[a-z]+\.(create|update|upsert|delete)|\.(insertone|insertmany|updateone|updatemany|deleteone|deletemany|bulkcreate|findoneandupdate)\s*\(|createpool\s*\(|createconnection\s*\(|database_url|(postgres|postgresql|mysql|mongodb):\/\/|\b(pg|mysql2?|sqlite3|mongodb|mongoose|psycopg2|sqlalchemy|knex|sequelize|@prisma\/client)\b(?!:))/i;
+const DB_ORM_WRITE = /(insert\s+into|update\s+\w+\s+set|delete\s+from|upsert|merge\s+into|create\s+table|alter\s+table|prisma\.[a-z]+\.(create|update|upsert|delete)|\.(insertone|insertmany|updateone|updatemany|deleteone|deletemany|bulkcreate|findoneandupdate)\s*\(|createpool\s*\(|createconnection\s*\(|database_url|(postgres|postgresql|mysql|mongodb):\/\/|\b(pg|mysql2?|sqlite3|mongodb|mongoose|psycopg2|sqlalchemy|knex|sequelize|@prisma\/client)\b(?!:)(?!\.Databases?\s*\())/i;
 // A genuine backend runtime — framework, listener, serverless dir, or container —
 // not merely a client file that happens to be named app.js / main.js / server.js.
 const BACKEND_STRONG = /(import\s+express|require\(['"]express['"]\)|"express"\s*:|\bfastify\b|@nestjs\/|\bkoa\b|from\s+flask\s+import|flask\(__name__\)|from\s+fastapi\s+import|fastapi\s*\(|app\.listen\s*\(|http\.createserver|createserver\s*\(|app\.(get|post|put|delete)\s*\()/i;
@@ -143,6 +145,41 @@ const BACKEND_PATH = /(pages\/api\/|app\/api\/.*\/route\.(js|ts)|netlify\/functi
 // (.SaveChanges), R DBI (dbWriteTable/dbExecute), pandas (.to_sql), JPA/JDBC.
 // Each token is framework-specific, so it can't collide with a generic call.
 const EXTRA_ORM_WRITE = /(\.SaveChanges(Async)?\s*\(|\bdbWriteTable\s*\(|\bdbAppendTable\s*\(|\bdbExecute\s*\(|\bdbSendStatement\s*\(|\.to_sql\s*\(|entityManager\.(persist|merge)\s*\(|\.executeUpdate\s*\(|jdbcTemplate\.(update|batchUpdate)\s*\()/i;
+// Mutating SQL run as a stored procedure (the ADODB/connection idiom INSERT/UPDATE miss).
+const STORED_PROC_EXEC = /\bexec(ute)?\s+(\[?dbo\]?\.)?\[?(sp_|usp_|p_)[a-z0-9_]+/i;
+
+// ---- Spreadsheet (VBA / Power Query / formula / connection) detectors -------------------
+// A workbook that shells out, imports Win32, touches the registry, or does FSO file
+// management can't live on the static shared host (§6). Deliberately NOT the bare
+// Scripting.FileSystemObject object (read-only existence checks stay Lane 1) and NOT
+// Application.Run (in-workbook macro dispatch, not OS execution).
+// Also covers WMI process execution (GetObject "winmgmts:" / Win32_Process.Create) — a
+// common way to launch a process without the Shell/WScript.Shell tokens.
+const VBA_OS_INTEGRATION = /\bShell\s*\(|(^|:)\s*Shell\s+["']|\bShell\s+["'][^"'\n]*\.(exe|cmd|bat|ps1|vbs|scr|com)\b|CreateObject\s*\(\s*["'](WScript\.Shell|WshShell|Shell\.Application)["']|\bDeclare\s+(PtrSafe\s+)?(Function|Sub)\s+\w+\s+Lib\s+["']|\b(URLDownloadToFile[AW]?|InternetOpenUrl[AW]?|WinExec|ShellExecute[AW]?|CreateProcess[AW]?)\b|\.(RegWrite|RegDelete)\b|\.(CopyFile|MoveFile|DeleteFile|CopyFolder|DeleteFolder)\s*[("']|=\s*cmd\s*\||\bDDEInitiate\s*\(|GetObject\s*\(\s*["']winmgmts:|CreateObject\s*\(\s*["']WbemScripting\.SWbemLocator["']|\bWin32_Process\b/i;
+// A live external data source — DB / ODBC / OLEDB / OData / Power Query / workbook
+// connection. §6 "live data connection / integration" -> Lane 2 WITHOUT claiming a server
+// runtime. The connection is read-or-write; an INSERT/UPDATE through it independently sets
+// dbWrite (-> Approve), so a read-only feed lands at Lane 2 and a writing one at Approve.
+//   CODE clauses are structural (a `Provider.Database(` M call, an ADODB object, a <dbPr>
+//   element) and safe to grep over EVERY artifact. `\w+\.Databases?\(` covers every Power
+//   Query DB connector generically (Sql/PostgreSQL/MySQL/Db2/Teradata/SapHana/Oracle/…),
+//   not a closed allowlist.
+const LIVE_DATA_CONN_CODE = /\b[A-Za-z][\w.]*\.Databases?\s*\(|Odbc\.(DataSource|Query)\s*\(|OleDb\.DataSource\s*\(|\bSnowflake\.\w+\s*\(|CreateObject\s*\(\s*["']ADODB\.(Connection|Recordset|Command)["']|New\s+ADODB\.(Connection|Recordset|Command)|<(dbPr|olapPr|webPr)\b/i;
+//   STRING clauses are loose connection-string fragments that can appear in benign prose
+//   (a defined-name label, a cell formula), so they are grepped ONLY over artifacts that
+//   actually carry connection strings (connections.xml, VBA, Power Query) — never over
+//   names/.defnames, formulas/.formulas, or links/.xllinks.
+const LIVE_DATA_CONN_STRING = /Provider\s*=\s*(SQLOLEDB|MSDASQL|Microsoft\.ACE\.OLEDB|MSDAORA)|\bDSN\s*=\s*\w|Initial\s*Catalog\s*=|Data\s*Source\s*=\s*[A-Za-z\\]|connectionId\s*=/i;
+// VBA writes a file to disk -> local persistence (fails §5.7 only when data is sensitive).
+const VBA_FILE_WRITE = /\bOpen\s+[^\n]*\bFor\s+(Output|Append|Binary)\b|\b(Print|Write)\s+#|\.CreateTextFile\s*\(/i;
+// VBA saves/copies to a UNC network share OR a mapped network drive (any drive letter but
+// C:) -> others consume it (Register tier; user-overridable via the reliance assumption).
+// Local C:\ scratch saves stay Lane 1.
+const VBA_SHARE_WRITE = /(SaveAs|SaveCopyAs|FileCopy)\b[^\n]*["']\\\\[\w.$-]+\\|["']\\\\[\w.$-]+\\[^"'\n]+\.(xls[xmb]?|csv|txt|pdf|xml|json)["']|(SaveAs|SaveCopyAs|FileCopy)\b[^\n]*["'](?![Cc]:)[A-Za-z]:\\/i;
+// Spreadsheet outbound web idioms — VBA HTTP objects, no-paren .Open to an external URL,
+// Power Query Web.Contents/OData/SharePoint, =WEBSERVICE to a non-gpfs URL, Win32 net APIs.
+// Scoped via grepSheet so a normal code POC that happens to contain these words is unaffected.
+const SHEET_OUTBOUND = /(MSXML2\.(XMLHTTP|ServerXMLHTTP)|WinHttp\.WinHttpRequest|Microsoft\.XMLHTTP)|\.Open\s+["']?(GET|POST|PUT|PATCH|DELETE)["']?\s*,\s*["'`]https?:\/\/(?!([a-z0-9.-]*\.)?gpfundsolutions\.com)|(Web\.Contents|OData\.Feed|SharePoint\.(Files|Contents|Tables))\s*\(|WEBSERVICE\s*\(\s*["']https?:\/\/(?!([a-z0-9.-]*\.)?gpfundsolutions\.com)|\b(URLDownloadToFile[AW]?|InternetOpenUrl[AW]?|WinHttpOpen)\b/i;
 
 // Pure resolver: from the code-derived facts + user assumptions, produce the
 // verdict and which §5 conditions hold. Pulled out of analyze() so we can answer
@@ -163,7 +200,7 @@ function decide(f, ua = {}) {
   const posture = f.probabilistic ? 'Yellow' : 'Green';
   const yellowOk = posture === 'Green' ? true : humanReview === true ? true : humanReview === false ? false : (tier === 'Use' && !f.silentBatch);
   const pass = {
-    host: !f.backend,
+    host: !f.backend && !f.liveDataConnection,
     c51: tier === 'Use',
     c52: dataScope === 'general' || !(authoritativeWrite || reliedProbabilistic || reliance === 'deliverable'),
     c53: !authoritativeWrite,
@@ -190,6 +227,20 @@ export function extractFacts(corpus) {
   // Reuse the comment-stripped text the scanner already produced — no second strip pass.
   const cleanFiles = scan.files.map((p) => ({ path: p.path, clean: p.stripped }));
   const grep = (re) => cleanFiles.some((f) => re.test(f.clean));
+  // grep ONLY the synthetic spreadsheet artifacts (VBA / formulas / connections / queries).
+  // The VBA/PQ/connection detectors run through this so they can NEVER affect the existing
+  // code corpus or collide with JS/Python/C idioms (fs.copyFile, exec(, CreateProcess…).
+  // The extractor ALWAYS emits artifacts under the directory prefixes below, so those match
+  // unconditionally. The bare-extension half is gated to a real spreadsheet upload — without
+  // the gate, .m / .cls / .bas would mis-claim MATLAB / Apex / FreeBASIC files in a code repo.
+  const sheetSrc = !!(corpus && corpus.source === 'spreadsheet');
+  const isSheetArtifact = (p) => /(^|\/)(vba|formulas|powerquery|connections|names|links|macrosheets)\//i.test(p) || (sheetSrc && /\.(vba|bas|cls|frm|m|pq|formulas|defnames|xllinks|xlm)$/i.test(p));
+  const grepSheet = (re) => cleanFiles.some((f) => isSheetArtifact(f.path) && re.test(f.clean));
+  // Connection strings only legitimately live in VBA, Power Query, or connections.xml — NOT
+  // in extracted defined names / cell formulas / link lists, where the same fragment
+  // ("Data Source=", "DSN=") could be benign label prose. Scope loose conn-string greps here.
+  const isConnArtifact = (p) => /(^|\/)(vba|powerquery|connections)\//i.test(p) || (sheetSrc && /\.(vba|bas|cls|frm|m|pq)$/i.test(p));
+  const grepConn = (re) => cleanFiles.some((f) => isConnArtifact(f.path) && re.test(f.clean));
   const fired = (id) => !!(S[id] && S[id].firedRuntime);
   const entry = (id) => S[id];
   const evOf = (...ids) => {
@@ -243,8 +294,14 @@ export function extractFacts(corpus) {
   const proxyAI = proxyPresent && !directAI;
   const localML = fired('logic-probabilistic-ml-inference');
   const backendEv = entry('backend-server-present')?.evidence || [];
+  // Excel-4.0 (XLM) macro-sheet OS/DLL execution — EXEC/CALL/REGISTER/FOPEN. Path-scoped to
+  // .xlm so it can't collide with Python exec(/C fopen(/JS .call( in the code corpus.
+  const excel4Exec = cleanFiles.some((f) => /\.xlm$/i.test(f.path) && /\b(EXEC|CALL|REGISTER|FOPEN|FWRITE|FWRITELN)\s*\(/i.test(f.clean));
+  // Macros present but unreadable (password-protected / stomped / corrupt): can't be cleared
+  // by reading, so default cautiously to Lane 2 (the extractor emits this sentinel).
+  const vbaUnreadable = grepSheet(/VBA_PROJECT_PRESENT_UNREADABLE/);
   const backend = backendEv.some((e) => BACKEND_STRONG.test(e.text)) || backendEv.some((e) => BACKEND_PATH.test(e.path))
-    || grep(BACKEND_OTHER) || cleanFiles.some((f) => /\.php$/i.test(f.path));
+    || grep(BACKEND_OTHER) || grepSheet(VBA_OS_INTEGRATION) || excel4Exec || vbaUnreadable || cleanFiles.some((f) => /\.php$/i.test(f.path));
   // A write to a system of record: DB/ORM/SQL or BaaS, a mutating call to an
   // external host, a same-origin POST to a write-y path, an ORM-chain write, a Go
   // (gorm/http) write, or a save to a network share — NOT a POST to /api/chat.
@@ -255,10 +312,19 @@ export function extractFacts(corpus) {
   const dbWrite = dbOrmWrite || fired('backend-as-a-service-write')
     || grep(MUTATING_EXTERNAL) || grep(METHOD_WRITE) || grep(MUTATING_FETCH_EXTERNAL)
     || grep(RELATIVE_POST_WRITE) || grep(XHR_MUTATE_EXTERNAL) || grep(SHARED_PATH_WRITE)
-    || grep(ORM_CHAIN_WRITE) || grep(GO_WRITE) || grep(EXTRA_ORM_WRITE);
+    || grep(ORM_CHAIN_WRITE) || grep(GO_WRITE) || grep(EXTRA_ORM_WRITE) || grepSheet(STORED_PROC_EXEC);
   const cdnScript = fired('third-party-cdn-script') || fired('third-party-analytics-telemetry');
-  const outbound = fired('outbound-network-call-nonallowlisted');
-  const persistence = fired('client-persistence-sensitive');
+  // outbound = the global ruleset signal (fetch/axios/XHR/WebSocket to external hosts) PLUS
+  // spreadsheet-scoped web idioms (VBA XMLHTTP/WinHTTP, PQ Web.Contents/SharePoint, =WEBSERVICE,
+  // URLDownloadToFile) and VBA email automation (Outlook/CDO). All spreadsheet patterns run
+  // through grepSheet so they CANNOT escalate a normal code POC that merely uses those words.
+  const outbound = fired('outbound-network-call-nonallowlisted')
+    || grepSheet(SHEET_OUTBOUND)
+    || grepSheet(/CreateObject\s*\(\s*["'](Outlook\.Application|CDO\.Message|Redemption\.\w+)["']|\.CreateItem\s*\(\s*(0|olMailItem)\b/i);
+  // A live external data feed (DB/ODBC/OLEDB/Power-Query/workbook connection) is the §6
+  // "live data connection / integration" Lane-2 trigger — distinct from a server runtime.
+  const liveDataConnection = grepSheet(LIVE_DATA_CONN_CODE) || grepConn(LIVE_DATA_CONN_STRING);
+  const persistence = fired('client-persistence-sensitive') || grepSheet(VBA_FILE_WRITE);
   // grep over full corpus, not capped evidence — benign SSO mentions (msal/oidc/saml)
   // must not crowd out an explicit allowAnonymous/public-auth flag in a later file.
   const publicAuth = grep(PUBLIC_AUTH);
@@ -281,11 +347,11 @@ export function extractFacts(corpus) {
   // grep over full corpus, not capped evidence — benign generate*Report NAMES must not
   // crowd out a genuine doc-gen library import (jspdf/exceljs…) that escalates to Approve.
   const relianceExport = grep(STRONG_RELIANCE_EXPORT);
-  const relianceShare = grep(STRONG_RELIANCE_SHARE);
+  const relianceShare = grep(STRONG_RELIANCE_SHARE) || grepSheet(VBA_SHARE_WRITE);
 
   // Bundle the code-derived facts and let the pure resolver do STEP 1 + STEP 2.
   const facts = {
-    directAI, proxyAI, localML, backend, dbWrite, cdnScript, outbound, persistence, publicAuth,
+    directAI, proxyAI, localML, backend, liveDataConnection, dbWrite, cdnScript, outbound, persistence, publicAuth,
     extraction, qa, drafting, deterministic, probabilistic, silentBatch,
     restrictedStrong, relianceExport, relianceShare,
   };
@@ -296,7 +362,7 @@ export function extractFacts(corpus) {
   else if (extraction) pattern = 'Extraction / parsing';
   else if (drafting || directAI || proxyAI) pattern = 'Drafting / summarizing';
   else if (localML) pattern = 'ML scoring / inference';
-  else if (dbWrite || backend) pattern = 'Data entry / integration';
+  else if (dbWrite || backend || liveDataConnection) pattern = 'Data entry / integration';
   else if (anyEvidenceMatches(entry('logic-deterministic-green'), /intl\.numberformat|tolocalestring|tofixed|date-fns|dayjs|\bformat\b/i) || fired('numeric-mutation-downstream')) pattern = 'Data formatting';
   else if (anyEvidenceMatches(entry('logic-deterministic-green'), /\bvalidate\w*\b|\bzod\b|\byup\b|\bjoi\b|\.test\(/i)) pattern = 'Data validation';
   else if (deterministic) pattern = 'Data entry / formatting';
@@ -339,7 +405,7 @@ export function extractFacts(corpus) {
 // certainty and confidence. Cheap and re-runnable on every what-if toggle (no re-scan).
 export function resolve(bundle, assumptions = {}) {
   const { facts, evOf } = bundle;
-  const { directAI, proxyAI, localML, backend, dbWrite, cdnScript, outbound, persistence, publicAuth, probabilistic, silentBatch } = facts;
+  const { directAI, proxyAI, localML, backend, liveDataConnection, dbWrite, cdnScript, outbound, persistence, publicAuth, probabilistic, silentBatch } = facts;
   const D = decide(facts, assumptions);
   const { tier, posture, dataScope, reliance, writeAuthority, humanReview, authoritativeWrite, reliedProbabilistic, pass } = D;
   const verdictKey = D.verdictKey;
@@ -355,12 +421,16 @@ export function resolve(bundle, assumptions = {}) {
 
   const c = {
     host: {
-      id: 'host', ref: '§6', title: backend ? 'Custom server runtime' : 'Self-contained front-end',
+      id: 'host', ref: '§6',
+      title: backend ? 'Custom server runtime' : liveDataConnection ? 'Live external data connection' : 'Self-contained front-end',
       pass: pass.host,
       sentence: backend
-        ? 'Runs its own server process, so it can’t share the static host — it needs an isolated container.'
-        : 'Builds to plain files that any shared host can serve — nothing to run on the server.',
-      ev: backend ? evOf('backend-server-present') : [],
+        ? 'Does work a plain static page can’t host — its own server runtime, or direct system/OS access — so it needs an isolated environment.'
+        : liveDataConnection
+          ? 'Connects to a live external data source (database, ODBC/OLEDB, or a query feed), so it isn’t a self-contained static file — §6 routes it to Lane 2.'
+          : 'Builds to plain files that any shared host can serve — nothing to run on the server.',
+      ev: backend ? evOf('backend-server-present', 'vba-os-integration', 'excel4-macro-exec', 'vba-present-unreadable')
+        : liveDataConnection ? evOf('vba-live-data-connection', 'pq-live-data-connection', 'connections-external-data') : [],
     },
     c51: {
       id: 'c51', ref: '§5.1', title: 'Risk tier',
@@ -447,7 +517,7 @@ export function resolve(bundle, assumptions = {}) {
             ? 'Configures public/consumer auth that bypasses single sign-on (SSO).'
             : 'No third-party scripts and no outbound calls beyond same-origin — runs cleanly behind SSO.',
       ev: cdnScript ? evOf('third-party-cdn-script', 'third-party-analytics-telemetry')
-        : outbound ? evOf('outbound-network-call-nonallowlisted') : [],
+        : outbound ? evOf('outbound-network-call-nonallowlisted', 'spreadsheet-web-outbound', 'formula-web-call', 'vba-outlook-email') : [],
     },
     c57: {
       id: 'c57', ref: '§5.7', title: 'Local data persistence',
@@ -515,6 +585,7 @@ export function resolve(bundle, assumptions = {}) {
   const lightenDefs = [
     { when: directAI, text: 'Route the AI through the approved company proxy instead of calling an outside model directly.', f: { directAI: false, proxyAI: true } },
     { when: backend, text: 'Serve it as a static page so there’s no custom server to run.', f: { backend: false } },
+    { when: liveDataConnection && !backend, text: 'Snapshot the data into the workbook (paste-values) instead of keeping a live external connection.', f: { liveDataConnection: false } },
     { when: authoritativeWrite, text: 'Have it propose the change for you to apply — don’t let it update the system of record itself.', f: { dbWrite: false } },
     { when: reliedProbabilistic, text: 'Add a step where you review and accept each result before it’s used.', ua: { humanReview: true } },
     { when: reliance === 'deliverable', text: 'Use it as a personal draft helper you review, rather than sending its output straight to clients.', ua: { reliance: 'personal' } },
