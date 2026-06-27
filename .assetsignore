@@ -1,0 +1,22 @@
+# Files in the repo root that should NOT be uploaded as public static assets.
+# (Same format as .gitignore.) worker.js is bundled as the Worker entry, and
+# ./functions is bundled into it via import — neither needs to be served. server.js,
+# tests, configs, and docs are not part of the front-end.
+/functions/
+/test/
+/.git/
+node_modules/
+worker.js
+wrangler.toml
+.assetsignore
+.gitignore
+.dev.vars
+.dev.vars.example
+server.js
+package.json
+package-lock.json
+bun.lockb
+*.md
+*.log
+.DS_Store
+Thumbs.db

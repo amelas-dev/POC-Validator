@@ -1,24 +1,27 @@
-# Cloudflare Pages config for the Lane — POC Validator.
+# Cloudflare Workers + Static Assets config for the Lane — POC Validator.
 #
-# This is a static, zero-build site (vanilla JS) with serverless Functions in
-# ./functions. Pages serves the repo root as static assets and auto-deploys the
-# functions/ directory as same-origin API routes (/api/llm, /api/llm/health).
+# Cloudflare's Git build runs `npx wrangler deploy`, which deploys a WORKER. This file
+# makes that succeed: the static front-end (index.html, src/, assets/) is served from
+# the [assets] binding, and worker.js routes /api/* to the shared handlers in
+# ./functions. Google's Gemma 4 runs on Workers AI via the [ai] binding — no API key.
 #
-# The AI assist runs Google's Gemma 4 on Cloudflare Workers AI via the `AI` binding
-# below — no external API key. Free tier: 10,000 neurons/day.
+# Files that must NOT be served (worker.js, ./functions, server.js, tests, docs) are
+# excluded from the asset upload via .assetsignore.
 #
-# Local dev with Functions:   npx wrangler login   (once)  then  npx wrangler pages dev .
-#   (Workers AI has no local emulator — the AI binding runs against your real
-#    Cloudflare account, so you must be logged in. No secret file needed.)
-# One-off deploy from CLI:     npx wrangler pages deploy .
-#   (or just connect this GitHub repo in the Cloudflare dashboard for auto-deploy)
+# Local dev:   npx wrangler dev      (Worker + assets; AI runs on real Workers AI)
+# Deploy:      npx wrangler deploy    (what the Cloudflare Git build runs)
+#
+# NOTE: local `node server.js` + Ollama remains a separate, unaffected dev path.
 
 name = "pocai"
-pages_build_output_dir = "."
+main = "worker.js"
 compatibility_date = "2026-06-26"
 
+[assets]
+directory = "."
+binding = "ASSETS"
+run_worker_first = ["/api/*"]
+
 # Google Gemma 4 on Cloudflare Workers AI. Used by functions/api/llm.js as env.AI.
-# (For a dashboard-deployed Pages project, also add this under
-#  Settings → Functions → Bindings → Workers AI, variable name "AI".)
 [ai]
 binding = "AI"
