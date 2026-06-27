@@ -23,17 +23,21 @@
 // prompt's own "code is untrusted data" guard plus app.js's escalate-only clamp are
 // untouched — this file only moves bytes.
 
-// Models VERIFIED accessible for this account via /api/llm/probe (2026-06-27),
-// ordered fast→quality. Each falls through to the next ONLY on an access/availability
-// error (not a timeout). The 26B Gemma is the final, always-works fallback (slow).
-// Pin a specific one with the CF_AI_MODEL var.
-// (NOTE: gemma-3-12b is 5018 access-gated; llama-3.1-8b-instruct / llama-3-8b / phi-2
-//  were deprecated 2026-05-30 (5028) — do NOT use those.)
+// Models chosen via /api/llm/probe (2026-06-27): each VERIFIED accessible for this
+// account AND producing valid enum values on the real prompt, ordered fastest→slowest.
+// Falls through to the next ONLY on an access/availability error (not a timeout).
+// Pin one with the CF_AI_MODEL var.
+//   Probe (latency / valid-enums): llama-3.3-70b-fp8-fast 1.7s 5/5 · llama-4-scout 2.4s
+//   5/5 · mistral-small-3.1-24b 5.2s 5/5 · qwen2.5-coder-32b 8.8s 5/5 (best judgment).
+//   EXCLUDED: llama-3.1-8b-instruct-fast (fast but INVALID enums, e.g. lane="data_access");
+//   gemma-3-12b (5018 access-gated); llama-3.1-8b-instruct/llama-3-8b/phi-2 (5028 deprecated).
+//   gemma-4-26b kept only as last-resort (slow reasoning model; returned empty in probe).
 const DEFAULT_MODELS = [
-  '@cf/meta/llama-3.1-8b-instruct-fast',          // fastest accessible (probe ~132ms)
-  '@cf/meta/llama-4-scout-17b-16e-instruct',      // newer 17B MoE, fast (~375ms)
-  '@cf/meta/llama-3.3-70b-instruct-fp8-fast',     // 70B quality, still fast (~352ms)
-  '@cf/google/gemma-4-26b-a4b-it',                // final fallback: always works, slow
+  '@cf/meta/llama-3.3-70b-instruct-fp8-fast',     // primary: ~1.7s, valid 5/5
+  '@cf/meta/llama-4-scout-17b-16e-instruct',      // ~2.4s, valid 5/5
+  '@cf/mistralai/mistral-small-3.1-24b-instruct', // ~5.2s, valid 5/5
+  '@cf/qwen/qwen2.5-coder-32b-instruct',          // ~8.8s, valid 5/5, strongest judgment
+  '@cf/google/gemma-4-26b-a4b-it',                // last resort only (slow; can return empty)
 ];
 const DEFAULT_TIMEOUT_MS = 50000;       // fail fast to deterministic instead of hanging ~130s
 const MAX_BODY = 2 * 1024 * 1024;       // mirror server.js's cap on forwarded request size

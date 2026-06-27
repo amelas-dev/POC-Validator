@@ -10,7 +10,6 @@
 
 import { onRequestPost as llmPost } from './functions/api/llm.js';
 import { onRequestGet as healthGet } from './functions/api/llm/health.js';
-import { onRequestGet as probeGet } from './functions/api/llm/probe.js';
 
 export default {
   async fetch(request, env) {
@@ -18,7 +17,6 @@ export default {
 
     if (url.pathname === '/api/llm' && request.method === 'POST') return llmPost({ request, env });
     if (url.pathname === '/api/llm/health' && request.method === 'GET') return healthGet({ request, env });
-    if (url.pathname === '/api/llm/probe' && request.method === 'GET') return probeGet({ request, env }); // TEMP diagnostic
 
     // Any other /api/* path: return JSON 404 rather than falling through to assets.
     if (url.pathname.startsWith('/api/')) {
