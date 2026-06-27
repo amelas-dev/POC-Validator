@@ -12,7 +12,7 @@
 // report unavailable so the app stays deterministic-only.
 
 // Friendly display name (the real model id lives in CF_AI_MODEL / llm.js).
-const DISPLAY_MODEL = 'Gemma 4 · Cloudflare';
+const DISPLAY_MODEL = 'Gemma 3 · Cloudflare';
 
 // Keep in sync with DEFAULT_MODEL in src/llm/advisor.js — the key advisor.js looks
 // up in `available`. Reporting it true lets the existing UI enable the toggle.
