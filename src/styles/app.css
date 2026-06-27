@@ -1,53 +1,55 @@
 /* ===========================================================================
-   Lane — GPFS POC Validator · "Lane Workbench"
+   Lane — POC Validator · "Graphite Workbench"
    A full-screen application shell (activity rail · tool header · work canvas ·
-   audit dock · status footer). The shell is GPFS-branded chrome that RECEDES;
-   the work keeps a calm centered measure. Status colour lives only in the orb,
-   the reason icons, the CTA and the footer dot — never a banner, never red.
-   GPFS palette: orange is the brand accent (chrome only), never a fill.
+   audit dock · status footer). The chrome is firm-agnostic and RECEDES into a
+   near-monochrome graphite system — cool neutral surfaces, Apple system type,
+   hairline everything. Colour lives ONLY in the result orb, the reason tiles
+   and the footer dot (the three lane outcomes) — never a banner, never red.
+   Subtle by default; the single colour moment is the verdict. The accent is
+   graphite, never a firm hue, so the app carries no house colour at all.
    =========================================================================== */
 
 :root {
-  /* ---- GPFS surfaces ---- */
-  --canvas: #F7F6F3;          /* warm paper — the work canvas, the soul */
-  --white:  #FFFFFF;          /* predominant — rail, header, dock, footer */
-  --gray:   #F7F7F7;          /* secondary plane */
-  --vista:  #E2DED9;          /* every region hairline / border */
-  --zircon: #DEE0E4;          /* tinted insets, segments, evidence */
+  /* ---- surfaces — cool, clean, near-white ---- */
+  --canvas: #F5F5F7;          /* signature light gray — the work canvas, the soul */
+  --white:  #FFFFFF;          /* predominant — rail, header, dock, footer, cards */
+  --gray:   #F5F5F7;          /* secondary plane */
+  --vista:  #D2D2D7;          /* control borders (inputs, segments, pills) */
+  --zircon: #E8E8ED;          /* tinted insets, evidence */
 
   /* shared chrome — dark mode flips these three once */
   --chrome-bg:   #FFFFFF;
-  --chrome-line: #E2DED9;
-  --chrome-ink:  #303033;
+  --chrome-line: #E6E6EB;     /* region dividers — a touch softer than control borders */
+  --chrome-ink:  #1D1D1F;
 
-  /* ---- GPFS ink ---- */
-  --ink:     #303033;         /* body text */
-  --muted:   #646466;         /* meta / captions / icon rest */
-  --soft:    #94908A;         /* faintest text */
-  --hairline: rgba(48, 48, 51, 0.10);
-  --hover:   #F1EFEA;
-  --press:   #E9E6DF;
+  /* ---- ink — neutral graphite grays ---- */
+  --ink:     #1D1D1F;         /* body text */
+  --muted:   #6E6E73;         /* meta / captions / icon rest */
+  --soft:    #86868B;         /* faintest text */
+  --hairline: rgba(0, 0, 0, 0.07);
+  --hover:   #F0F0F2;
+  --press:   #E6E6EB;
 
-  /* ---- GPFS brand accent — SMALL surfaces only, never a fill ---- */
-  --brand:       #DC6E2C;     /* logo tile · active nav · primary CTA · focus ring */
-  --brand-press: #C25F23;
-  --brown:       #8B7D66;     /* caps subheads · two-tone · dock heading */
+  /* ---- accent — GRAPHITE, monochrome, SMALL surfaces only, never a fill ---- */
+  --brand:       #1D1D1F;     /* logo tile · active nav · primary CTA · focus ring */
+  --brand-press: #000000;
+  --brown:       #6E6E73;     /* caps subheads · two-tone · dock heading (neutral label gray) */
 
-  /* ---- outcome triad — non-red, GPFS-native, distinct from --brand ---- */
-  --ready: #4E8C6A;       --ready-glow: #EAF1EC;   /* slate-green — "go" */
-  --developer: #6C809A;   --developer-glow: #E9EDF2; /* Bermuda Grey — "hand to a dev" */
-  --signoff: #C0654A;     --signoff-glow: #F6EAE5;   /* darkened Feldspar — "sign-off" */
+  /* ---- outcome triad — the ONLY colour; refined, desaturated, distinct ---- */
+  --ready: #2E9E6B;       --ready-glow: #E7F4EE;     /* emerald — "go" */
+  --developer: #4C6FBF;   --developer-glow: #EAEFFA;  /* cobalt — "hand to a dev" */
+  --signoff: #C2683F;     --signoff-glow: #F8ECE4;    /* terracotta — "sign-off" */
 
-  --error-ink: #9A5A3C;   /* decoupled from the triad */
+  --error-ink: #C0392B;   /* decoupled from the triad — clear, not alarming */
 
-  /* ---- type roles ---- */
-  --font-display: "Montserrat", system-ui, sans-serif;        /* ALL-CAPS nav / labels / buttons */
-  --font-serif:   "Source Serif 4", Georgia, "Times New Roman", serif; /* headlines / story / human */
-  --font-ui:      "Source Sans 3", system-ui, -apple-system, sans-serif; /* captions / utility */
+  /* ---- type roles — Apple system stack throughout ---- */
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;     /* ALL-CAPS nav / labels / buttons */
+  --font-serif:   -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", system-ui, sans-serif;  /* the DISPLAY face — headlines / prompt */
+  --font-ui:      -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;     /* captions / utility / body */
   --mono: "SF Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
   --ease: cubic-bezier(0.16, 1, 0.3, 1);
-  --shadow: 0 1px 2px rgba(48, 48, 51, 0.04), 0 22px 50px -34px rgba(48, 48, 51, 0.28);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 14px 40px -22px rgba(0, 0, 0, 0.22);
 
   --rail-w: 56px;
   --head-h: 52px;
@@ -204,7 +206,7 @@ body { overflow: hidden; }   /* the shell owns the viewport; only .main scrolls 
 .rail-btn.dormant { opacity: 0.38; cursor: default; pointer-events: none; }
 .rail-btn.dormant:hover { background: none; color: var(--muted); }
 
-/* tooltip flyout — Montserrat caps */
+/* tooltip flyout — system caps */
 .tip {
   position: absolute; left: calc(100% + 10px); top: 50%; transform: translateY(-50%) translateX(-4px);
   background: var(--chrome-ink); color: var(--white);
@@ -296,16 +298,16 @@ body { overflow: hidden; }   /* the shell owns the viewport; only .main scrolls 
 .drop-hint {
   position: absolute; inset: 0; display: none; place-items: center; z-index: 6;
   background: color-mix(in srgb, var(--canvas) 86%, transparent); backdrop-filter: blur(3px);
-  font-family: var(--font-serif); font-size: 22px; font-weight: 600; color: var(--ink);
+  font-family: var(--font-serif); font-size: 23px; font-weight: 600; letter-spacing: -0.02em; color: var(--ink);
 }
 .shell[data-drag="on"] .drop-hint { display: grid; }
 
 /* ---- input ---- */
 .view-input { gap: 0; }
 .prompt {
-  font-family: var(--font-serif); font-style: italic; font-weight: 600;
-  font-size: 25px; line-height: 1.32; color: var(--ink);
-  margin: 0 0 22px;   /* no max-width: fits on one line where there's room, wraps on a narrow phone */
+  font-family: var(--font-serif); font-weight: 600;
+  font-size: 27px; line-height: 1.22; letter-spacing: -0.022em; color: var(--ink);
+  margin: 0 0 24px;   /* no max-width: fits on one line where there's room, wraps on a narrow phone */
 }
 .pill {
   display: flex; align-items: center; gap: 6px;
@@ -386,12 +388,12 @@ body { overflow: hidden; }   /* the shell owns the viewport; only .main scrolls 
 @keyframes orb-pulse { 0% { box-shadow: 0 0 0 9px var(--glow), 0 8px 22px -6px transparent; } 40% { box-shadow: 0 0 0 17px color-mix(in srgb, var(--c) 12%, transparent), 0 8px 22px -6px transparent; } 100% { box-shadow: 0 0 0 9px var(--glow), 0 8px 22px -6px transparent; } }
 
 .headline {
-  font-family: var(--font-serif); font-weight: 600; letter-spacing: 0.002em; line-height: 1.04;
-  font-size: clamp(28px, 3.6vw, 38px); color: var(--ink);
+  font-family: var(--font-serif); font-weight: 700; letter-spacing: -0.028em; line-height: 1.03;
+  font-size: clamp(30px, 3.8vw, 42px); color: var(--ink);
   opacity: 0; transform: translateY(8px); animation: rise 0.45s var(--ease) 0.16s forwards;
 }
 @keyframes rise { to { opacity: 1; transform: none; } }
-.story { font-family: var(--font-serif); font-size: 16.5px; color: var(--muted); line-height: 1.5; margin: 12px 0 4px; max-width: 52ch; animation: fade 0.5s var(--ease) 0.3s both; }
+.story { font-family: var(--font-ui); font-size: 16px; color: var(--muted); line-height: 1.55; margin: 13px 0 4px; max-width: 52ch; letter-spacing: -0.005em; animation: fade 0.5s var(--ease) 0.3s both; }
 .caption { font-family: var(--font-ui); font-size: 12.5px; color: var(--soft); margin-bottom: 20px; animation: fade 0.5s var(--ease) 0.36s both; }
 .caption .slug { color: var(--muted); }
 
@@ -606,7 +608,7 @@ body { overflow: hidden; }   /* the shell owns the viewport; only .main scrolls 
 .walk-dots span { width: 7px; height: 7px; border-radius: 50%; background: var(--vista); transition: background 0.3s, transform 0.3s var(--ease); }
 .walk-dots span.past { background: color-mix(in srgb, var(--c) 45%, var(--vista)); }
 .walk-dots span.on { background: var(--c); transform: scale(1.4); }
-.walk-text { font-family: var(--font-serif); font-size: clamp(20px, 2.8vw, 26px); font-weight: 600; line-height: 1.4; min-height: 3.2em; animation: rise 0.4s var(--ease); }
+.walk-text { font-family: var(--font-serif); font-size: clamp(21px, 2.8vw, 27px); font-weight: 600; letter-spacing: -0.02em; line-height: 1.32; min-height: 3.2em; animation: rise 0.4s var(--ease); }
 .walk-ctrl { display: flex; align-items: center; gap: 12px; margin-top: 30px; }
 .walk-ctrl [data-act="prev"] { margin-right: auto; }
 .voice { background: none; border: 1px solid var(--vista); border-radius: 10px; width: 38px; height: 38px; display: grid; place-items: center; cursor: pointer; color: var(--soft); transition: color 0.18s, border-color 0.18s; }
@@ -632,37 +634,110 @@ body { overflow: hidden; }   /* the shell owns the viewport; only .main scrolls 
 }
 
 /* ===========================================================================
-   Dark mode — flip the three chrome vars + surfaces; keep brand orange
+   Local AI assist — chip on the card · badges · dock sanity-check · toggle
+   Uses the outcome triad vars so it adapts to dark mode automatically.
+   =========================================================================== */
+/* status chip under the trust line */
+.ai-chip { display: inline-flex; align-items: center; gap: 8px; margin: -6px 0 16px; padding: 8px 12px; border-radius: 10px; font-family: var(--font-ui); font-size: 12.5px; line-height: 1.3; border: 1px solid var(--vista); background: var(--gray); color: var(--muted); }
+.ai-chip .ai-sub { color: var(--soft); font-size: 11.5px; }
+.ai-chip svg { width: 15px; height: 15px; flex: none; }
+button.ai-chip { cursor: pointer; transition: background 0.15s, border-color 0.15s, transform 0.1s; }
+button.ai-chip:hover { background: var(--hover); }
+button.ai-chip:active { transform: scale(0.99); }
+.ai-chip.ai-done.ai-agree { color: var(--ready); border-color: color-mix(in srgb, var(--ready) 30%, var(--vista)); background: var(--ready-glow); }
+.ai-chip.ai-done.ai-agree .ai-sub { color: color-mix(in srgb, var(--ready) 55%, var(--soft)); }
+.ai-chip.ai-done.ai-caution { color: var(--signoff); border-color: color-mix(in srgb, var(--signoff) 30%, var(--vista)); background: var(--signoff-glow); }
+.ai-chip.ai-done.ai-caution .ai-sub { color: color-mix(in srgb, var(--signoff) 55%, var(--soft)); }
+.ai-chip.ai-done.ai-lighter { color: var(--developer); border-color: color-mix(in srgb, var(--developer) 30%, var(--vista)); background: var(--developer-glow); }
+.ai-chip.ai-failed { color: var(--soft); }
+.ai-chip.ai-running { color: var(--brown); }
+.ai-spin { width: 13px; height: 13px; border-radius: 50%; border: 2px solid var(--vista); border-top-color: var(--brown); display: inline-block; flex: none; animation: ai-spin 0.8s linear infinite; }
+@keyframes ai-spin { to { transform: rotate(360deg); } }
+
+/* the AI toggle in the options menu */
+.ai-toggle { display: inline-flex; align-items: center; gap: 9px; background: none; border: none; padding: 4px 0; cursor: pointer; font: inherit; font-family: var(--font-ui); color: var(--ink); }
+.ai-toggle:disabled { cursor: not-allowed; opacity: 0.55; }
+.ai-tg-track { width: 34px; height: 20px; border-radius: 999px; background: var(--vista); position: relative; transition: background 0.18s var(--ease); flex: none; }
+.ai-tg-thumb { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--white); box-shadow: 0 1px 2px rgba(0,0,0,0.2); transition: transform 0.18s var(--ease); }
+.ai-toggle.on .ai-tg-track { background: var(--brand); }
+.ai-toggle.on .ai-tg-thumb { transform: translateX(14px); }
+.ai-tg-txt { font-size: 12.5px; color: var(--muted); }
+.opts-hint { margin: 2px 0 0; font-size: 11.5px; color: var(--soft); line-height: 1.4; max-width: 232px; }
+
+/* AI badge + reason on assumption rows (dock) */
+.ai-badge { display: inline-flex; align-items: center; gap: 3px; font-family: var(--font-display); font-size: 9px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--brown); background: color-mix(in srgb, var(--brown) 14%, var(--white)); padding: 3px 6px; border-radius: 6px; }
+.ai-badge svg { width: 11px; height: 11px; }
+.ai-assume-why { font-size: 12px; color: var(--muted); line-height: 1.45; margin: 6px 0 0; padding-left: 2px; }
+.ai-assume-why b { color: var(--brown); font-weight: 600; }
+
+/* trust-line + cert-block "AI-judged" counts */
+.trust .t-ai { color: var(--brown); }
+.cert-ai { color: var(--brown); display: flex; align-items: center; gap: 6px; }
+.cert-ai svg { width: 13px; height: 13px; }
+
+/* AI sanity-check block at the top of the dock */
+.ai-block { border: 1px solid var(--vista); border-radius: 12px; padding: 13px 15px; margin: 10px 0 12px; background: var(--gray); font-size: 13px; }
+.ai-block.ai-agree { border-color: color-mix(in srgb, var(--ready) 35%, var(--vista)); background: color-mix(in srgb, var(--ready-glow) 70%, var(--white)); }
+.ai-block.ai-caution { border-color: color-mix(in srgb, var(--signoff) 35%, var(--vista)); background: color-mix(in srgb, var(--signoff-glow) 70%, var(--white)); }
+.ai-block.ai-lighter { border-color: color-mix(in srgb, var(--developer) 35%, var(--vista)); }
+.ai-block.ai-block-failed, .ai-block.ai-block-running { color: var(--muted); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ai-block.ai-block-failed svg, .ai-block.ai-block-running svg { width: 15px; height: 15px; color: var(--brown); }
+.ai-bk-head { display: flex; align-items: center; gap: 7px; font-family: var(--font-display); font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--brown); }
+.ai-bk-head svg { width: 15px; height: 15px; }
+.ai-bk-model { font-family: var(--font-ui); font-size: 11px; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--soft); margin-left: auto; }
+.ai-bk-verdict { margin-top: 8px; font-size: 13.5px; color: var(--ink); }
+.ai-bk-reason { margin-top: 4px; font-family: var(--font-ui); color: var(--muted); line-height: 1.45; }
+.ai-bk-fields { margin-top: 10px; display: grid; gap: 7px; }
+.ai-bk-field { display: grid; grid-template-columns: 86px 1fr; gap: 2px 10px; font-size: 12px; }
+.ai-bk-k { color: var(--soft); font-family: var(--font-display); font-size: 9.5px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; padding-top: 2px; }
+.ai-bk-v { color: var(--ink); font-weight: 600; }
+.ai-bk-v em { color: var(--soft); font-weight: 400; font-style: normal; }
+.ai-bk-why { grid-column: 2; color: var(--muted); line-height: 1.4; }
+.ai-bk-foot { margin-top: 10px; font-size: 11px; color: var(--soft); line-height: 1.45; }
+/* held downgrade — the AI read is lighter than the floor and not applied */
+.ai-held { margin-top: 10px; padding: 10px 12px; border-radius: 9px; background: color-mix(in srgb, var(--developer) 12%, var(--white)); border: 1px solid color-mix(in srgb, var(--developer) 28%, var(--vista)); font-size: 12.5px; color: var(--ink); line-height: 1.5; }
+.ai-held b { font-weight: 600; }
+.ai-apply { display: inline-block; margin-top: 9px; font: inherit; font-family: var(--font-ui); font-size: 12.5px; font-weight: 600; color: var(--white); background: var(--developer); border: none; border-radius: 8px; padding: 7px 13px; cursor: pointer; transition: filter 0.15s, transform 0.1s; }
+.ai-apply:hover { filter: brightness(1.06); }
+.ai-apply:active { transform: scale(0.98); }
+@media (prefers-reduced-motion: reduce) { .ai-spin { animation: none; } }
+
+/* ===========================================================================
+   Dark mode — true-black Apple dark; the graphite accent inverts to near-white
    =========================================================================== */
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { color-scheme: dark;
-  --canvas: #191817;  --white: #222120;  --gray: #1E1D1B;
-  --vista: #34322B;   --zircon: #2E2C26;
-  --chrome-bg: #1C1B19; --chrome-line: rgba(255,255,255,0.10); --chrome-ink: #ECEAE4;
-  --ink: #ECEAE4;     --muted: #A9A498;  --soft: #7E7A6F;
-  --hairline: rgba(255,255,255,0.10); --hover: #2A2822; --press: #322F27;
-  --brand: #E07D3C; --brand-press: #C96A2C; --brown: #B6A88E;
-  --ready: #5FA67E;       --ready-glow: rgba(95,166,126,0.16);
-  --developer: #88A0C0;   --developer-glow: rgba(136,160,192,0.18);
-  --signoff: #D27E63;     --signoff-glow: rgba(210,126,99,0.18);
-  --error-ink: #D8A07E;
-  --shadow: 0 1px 2px rgba(0,0,0,0.4), 0 26px 60px -34px rgba(0,0,0,0.7);
+  --canvas: #000000;  --white: #1C1C1E;  --gray: #161618;
+  --vista: #38383A;   --zircon: #2C2C2E;
+  --chrome-bg: #1C1C1E; --chrome-line: rgba(255,255,255,0.10); --chrome-ink: #F5F5F7;
+  --ink: #F5F5F7;     --muted: #A1A1A6;  --soft: #8E8E93;
+  --hairline: rgba(255,255,255,0.10); --hover: #2C2C2E; --press: #38383A;
+  --brand: #F5F5F7; --brand-press: #FFFFFF; --brown: #98989D;
+  --ready: #34C77B;       --ready-glow: rgba(52,199,123,0.16);
+  --developer: #6E97E8;   --developer-glow: rgba(110,151,232,0.18);
+  --signoff: #E08A5C;     --signoff-glow: rgba(224,138,92,0.18);
+  --error-ink: #FF6B5C;
+  --shadow: 0 1px 2px rgba(0,0,0,0.5), 0 22px 56px -30px rgba(0,0,0,0.85);
 }}
 [data-theme="dark"] { color-scheme: dark;
-  --canvas: #191817;  --white: #222120;  --gray: #1E1D1B;
-  --vista: #34322B;   --zircon: #2E2C26;
-  --chrome-bg: #1C1B19; --chrome-line: rgba(255,255,255,0.10); --chrome-ink: #ECEAE4;
-  --ink: #ECEAE4;     --muted: #A9A498;  --soft: #7E7A6F;
-  --hairline: rgba(255,255,255,0.10); --hover: #2A2822; --press: #322F27;
-  --brand: #E07D3C; --brand-press: #C96A2C; --brown: #B6A88E;
-  --ready: #5FA67E;       --ready-glow: rgba(95,166,126,0.16);
-  --developer: #88A0C0;   --developer-glow: rgba(136,160,192,0.18);
-  --signoff: #D27E63;     --signoff-glow: rgba(210,126,99,0.18);
-  --error-ink: #D8A07E;
-  --shadow: 0 1px 2px rgba(0,0,0,0.4), 0 26px 60px -34px rgba(0,0,0,0.7);
+  --canvas: #000000;  --white: #1C1C1E;  --gray: #161618;
+  --vista: #38383A;   --zircon: #2C2C2E;
+  --chrome-bg: #1C1C1E; --chrome-line: rgba(255,255,255,0.10); --chrome-ink: #F5F5F7;
+  --ink: #F5F5F7;     --muted: #A1A1A6;  --soft: #8E8E93;
+  --hairline: rgba(255,255,255,0.10); --hover: #2C2C2E; --press: #38383A;
+  --brand: #F5F5F7; --brand-press: #FFFFFF; --brown: #98989D;
+  --ready: #34C77B;       --ready-glow: rgba(52,199,123,0.16);
+  --developer: #6E97E8;   --developer-glow: rgba(110,151,232,0.18);
+  --signoff: #E08A5C;     --signoff-glow: rgba(224,138,92,0.18);
+  --error-ink: #FF6B5C;
+  --shadow: 0 1px 2px rgba(0,0,0,0.5), 0 22px 56px -30px rgba(0,0,0,0.85);
 }
-[data-theme="dark"] .go, [data-theme="dark"] .cta, [data-theme="dark"] .brand { color: #191817; }
+/* on dark, the accent surface is near-white, so its text/glyph goes dark; and the
+   logo tile's accent-tinted halo would read as a white glow — neutralise it */
+[data-theme="dark"] .go, [data-theme="dark"] .cta, [data-theme="dark"] .brand { color: #1D1D1F; }
+[data-theme="dark"] .brand { box-shadow: 0 2px 10px -3px rgba(0,0,0,0.6); }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .go,
-  :root:not([data-theme="light"]) .cta { color: #191817; } }
+  :root:not([data-theme="light"]) .cta { color: #1D1D1F; }
+  :root:not([data-theme="light"]) .brand { color: #1D1D1F; box-shadow: 0 2px 10px -3px rgba(0,0,0,0.6); } }
 
 /* ===========================================================================
    Responsive — the shell fills the viewport; the WORK keeps its measure
@@ -680,18 +755,18 @@ body { overflow: hidden; }   /* the shell owns the viewport; only .main scrolls 
   .shell { grid-template-columns: var(--rail-w) 0px minmax(0, 1fr) 0px !important; }
   .dock {
     position: fixed; top: 0; right: 0; height: 100dvh; width: min(408px, 92vw);
-    border-left: 1px solid var(--chrome-line); box-shadow: -24px 0 60px -30px rgba(40,38,34,0.34);
+    border-left: 1px solid var(--chrome-line); box-shadow: -24px 0 60px -30px rgba(0,0,0,0.22);
     transform: translateX(100%); transition: transform 0.34s var(--ease); z-index: 50;
   }
   .shell[data-dock="open"] .dock { transform: none; visibility: visible; }
   .dock-handle { display: none; }
   .sidebar {
     position: fixed; top: 0; left: var(--rail-w); height: 100dvh; width: min(248px, 80vw);
-    box-shadow: 24px 0 60px -30px rgba(40,38,34,0.34);
+    box-shadow: 24px 0 60px -30px rgba(0,0,0,0.22);
     transform: translateX(-115%); transition: transform 0.30s var(--ease), opacity 0.22s var(--ease); z-index: 50;
   }
   .shell[data-side="open"] .sidebar { transform: none; visibility: visible; }
-  .scrim { display: block; position: fixed; inset: 0; background: rgba(28,27,25,0.30); backdrop-filter: blur(1px); opacity: 0; pointer-events: none; transition: opacity 0.3s var(--ease); z-index: 45; }
+  .scrim { display: block; position: fixed; inset: 0; background: rgba(0,0,0,0.28); backdrop-filter: blur(1px); opacity: 0; pointer-events: none; transition: opacity 0.3s var(--ease); z-index: 45; }
   .shell[data-dock="open"] ~ .scrim, .shell[data-side="open"] ~ .scrim { opacity: 1; pointer-events: auto; }
 }
 
@@ -718,7 +793,7 @@ body { overflow: hidden; }   /* the shell owns the viewport; only .main scrolls 
 }
 
 /* footer: drop the long disclaimer (and its separator) once the bar gets tight.
-   The "GPFS POC Triage" link still anchors it, and the full line lives in the dock
+   The "POC Triage" link still anchors it, and the full line lives in the dock
    colophon + the reference drawer. The left status zone ellipsizes as a safety net. */
 @media (max-width: 760px) {
   .foot-disclaimer, .foot-r .foot-sep { display: none; }
@@ -752,5 +827,5 @@ body { overflow: hidden; }   /* the shell owns the viewport; only .main scrolls 
   :focus-visible { outline: 2px solid Highlight; }
 }
 @media (prefers-contrast: more) {
-  :root { --muted: #4A4A4C; --soft: #5C5A55; --hairline: rgba(48,48,51,0.24); }
+  :root { --muted: #48484A; --soft: #5C5C60; --hairline: rgba(0,0,0,0.22); }
 }

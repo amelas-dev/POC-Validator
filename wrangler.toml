@@ -1,0 +1,24 @@
+# Cloudflare Pages config for the Lane — POC Validator.
+#
+# This is a static, zero-build site (vanilla JS) with serverless Functions in
+# ./functions. Pages serves the repo root as static assets and auto-deploys the
+# functions/ directory as same-origin API routes (/api/llm, /api/llm/health).
+#
+# The AI assist runs Google's Gemma 4 on Cloudflare Workers AI via the `AI` binding
+# below — no external API key. Free tier: 10,000 neurons/day.
+#
+# Local dev with Functions:   npx wrangler login   (once)  then  npx wrangler pages dev .
+#   (Workers AI has no local emulator — the AI binding runs against your real
+#    Cloudflare account, so you must be logged in. No secret file needed.)
+# One-off deploy from CLI:     npx wrangler pages deploy .
+#   (or just connect this GitHub repo in the Cloudflare dashboard for auto-deploy)
+
+name = "poc-validator"
+pages_build_output_dir = "."
+compatibility_date = "2026-06-26"
+
+# Google Gemma 4 on Cloudflare Workers AI. Used by functions/api/llm.js as env.AI.
+# (For a dashboard-deployed Pages project, also add this under
+#  Settings → Functions → Bindings → Workers AI, variable name "AI".)
+[ai]
+binding = "AI"

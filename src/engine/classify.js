@@ -92,7 +92,7 @@ const VERDICTS = {
     key: 'lane1', lane: 'Lane 1 (light)', title: 'Lane 1',
     descriptor: 'The light path — a quick safety review, and you stay responsible',
     sentence: 'It can go live on the light path: published behind login after a quick safety review. You stay responsible for what it produces.',
-    hosting: 'Shared Hosting (tools.gpfundsolutions.com) · login required · a quick review before it publishes · you stay responsible · 90-day check-in',
+    hosting: 'Shared hosting · login required · a quick review before it publishes · you stay responsible · 90-day check-in',
   },
   lane2: {
     key: 'lane2', lane: 'Lane 2', title: 'Lane 2',
@@ -444,7 +444,7 @@ export function resolve(bundle, assumptions = {}) {
         : outbound
           ? 'Makes outbound calls to non-allowlisted external hosts — confirm each host is on the approved allowlist.'
           : publicAuth
-            ? 'Configures public/consumer auth that bypasses GPFS SSO.'
+            ? 'Configures public/consumer auth that bypasses single sign-on (SSO).'
             : 'No third-party scripts and no outbound calls beyond same-origin — runs cleanly behind SSO.',
       ev: cdnScript ? evOf('third-party-cdn-script', 'third-party-analytics-telemetry')
         : outbound ? evOf('outbound-network-call-nonallowlisted') : [],

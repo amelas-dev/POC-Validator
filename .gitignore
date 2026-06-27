@@ -7,6 +7,10 @@ node_modules/
 dist/
 build/
 
+# Cloudflare Pages — local secrets & build cache (NEVER commit the API key)
+.dev.vars
+.wrangler/
+
 # OS / editor cruft
 .DS_Store
 Thumbs.db

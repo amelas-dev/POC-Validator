@@ -1,4 +1,4 @@
-// ruleset.js — the canonical GPFS POC Lane signal set.
+// ruleset.js — the canonical POC Lane signal set.
 // AUTO-GENERATED from the reconciled governance ruleset, then hand-curated.
 // Each signal carries detection patterns plus how it maps to the policy.
 // Patterns are matched case-insensitively against file paths and contents.
@@ -96,8 +96,8 @@ export const SIGNALS = [
   },
   {
     id: "sso-gating-posture",
-    label: "GPFS SSO gating posture (absence usually fine; explicit public/consumer-auth is a flag)",
-    why: "Section 5.6 requires the utility runs behind GPFS SSO. Lane 1 Shared Hosting (tools.gpfundsolutions.com) supplies SSO at the platform layer, so ABSENCE of in-app auth is NOT disqualifying by itself. Only an explicit anonymous/public-access config, or a self-rolled consumer auth provider that bypasses GPFS SSO, contradicts 5.6. Final SSO placement is a hosting fact (context-needed).",
+    label: "SSO gating posture (absence usually fine; explicit public/consumer-auth is a flag)",
+    why: "Section 5.6 requires the utility runs behind single sign-on (SSO). Lane 1 shared hosting supplies SSO at the platform layer, so ABSENCE of in-app auth is NOT disqualifying by itself. Only an explicit anonymous/public-access config, or a self-rolled consumer auth provider that bypasses SSO, contradicts 5.6. Final SSO placement is a hosting fact (context-needed).",
     mapsTo: "5.6",
     effect: "context-needed",
     confidence: "weak",

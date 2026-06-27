@@ -3,11 +3,10 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Lane — GPFS</title>
+  <title>Lane — POC Validator</title>
   <meta name="description" content="Paste your tool. See if it can go live." />
-  <!-- GPFS-orange mark: three ascending lanes -->
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23dc6e2c'/%3E%3Cg fill='%23fff'%3E%3Crect x='8' y='17' width='3.4' height='7' rx='1.5'/%3E%3Crect x='14.3' y='12' width='3.4' height='12' rx='1.5'/%3E%3Crect x='20.6' y='8' width='3.4' height='16' rx='1.5'/%3E%3C/g%3E%3C/svg%3E" />
-  <link rel="stylesheet" href="assets/fonts/fonts.css" />
+  <!-- graphite mark: three ascending lanes -->
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%231d1d1f'/%3E%3Cg fill='%23fff'%3E%3Crect x='8' y='17' width='3.4' height='7' rx='1.5'/%3E%3Crect x='14.3' y='12' width='3.4' height='12' rx='1.5'/%3E%3Crect x='20.6' y='8' width='3.4' height='16' rx='1.5'/%3E%3C/g%3E%3C/svg%3E" />
   <link rel="stylesheet" href="src/styles/app.css" />
 </head>
 <body>
@@ -17,7 +16,7 @@
 
     <!-- ============ Region A · Activity rail ============ -->
     <nav class="rail" aria-label="Tools">
-      <a class="brand" href="#work" aria-label="Lane — GP Fund Solutions">
+      <a class="brand" href="#work" aria-label="Lane — POC Validator">
         <span class="brand-tile" aria-hidden="true">
           <svg viewBox="0 0 32 32"><g fill="currentColor">
             <rect x="8" y="17" width="3.4" height="7" rx="1.5"/>
@@ -34,7 +33,9 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 13.5a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0-1.2-2.9H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.2-2.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3 1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
           <span class="tip">Settings</span>
         </button>
-        <span class="avatar" title="Alex Melas — GP Fund Solutions" aria-hidden="true">AM</span>
+        <span class="avatar" title="Account" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><circle cx="12" cy="8.4" r="3.5"/><path d="M5.6 20a6.4 6.4 0 0 1 12.8 0"/></svg>
+        </span>
       </div>
     </nav>
 
@@ -73,6 +74,14 @@
               <button role="menuitemradio" data-theme="light">Light</button>
               <button role="menuitemradio" data-theme="dark">Dark</button>
             </div>
+          </div>
+          <div class="opts-group" role="group" aria-label="AI assist">
+            <span class="opts-label">AI assist</span>
+            <button class="ai-toggle" id="ai-toggle" type="button" role="menuitemcheckbox" aria-checked="false" disabled>
+              <span class="ai-tg-track" aria-hidden="true"><span class="ai-tg-thumb"></span></span>
+              <span class="ai-tg-txt" id="ai-tg-txt">Off</span>
+            </button>
+            <p class="opts-hint" id="ai-hint">Checking for an AI model…</p>
           </div>
         </div>
       </div>
@@ -166,8 +175,8 @@
       </div>
       <div class="dock-body" id="drawer-body"></div>
       <div class="colophon-mini">
-        A quick read, not the final word — your AI Operations Lead makes the hosting call,
-        under the GPFS POC Triage &amp; Hosting Playbook.
+        A quick read, not the final word — your AI operations lead makes the hosting call,
+        under your organisation’s POC triage &amp; hosting playbook.
       </div>
     </aside>
 
@@ -181,7 +190,7 @@
       <div class="foot-r">
         <span class="foot-disclaimer">Indication only — your AI Operations Lead makes the call</span>
         <span class="foot-sep">·</span>
-        <a class="foot-link" href="#" id="playbook-link">GPFS POC Triage</a>
+        <a class="foot-link" href="#" id="playbook-link">POC Triage</a>
       </div>
     </footer>
 

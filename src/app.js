@@ -6,6 +6,7 @@ import { extractFacts, resolve } from './engine/classify.js';
 import {
   parseGitHubUrl, loadFromGitHub, loadFromFileList, loadFromZip, loadFromPaste,
 } from './engine/sources.js';
+import { runAdvisor, checkAvailable, DEFAULT_MODEL } from './llm/advisor.js';
 
 const $ = (s) => document.querySelector(s);
 const card = $('#card');       // the work canvas; data-state drives the view
@@ -24,6 +25,72 @@ let cachedFacts = null;   // assumption-independent facts; scanned once, reused 
 let overrides = {};
 let lastResult = null;
 let currentWalkClose = null;  // teardown handle for an active walkthrough overlay
+
+// ---- local-AI assist (optional) -------------------------------------------
+// The deterministic engine always decides. When AI assist is ON and a local
+// model is reachable, the advisor proposes values for the four un-inferable
+// assumptions; those feed the SAME resolver as user overrides, but rank below
+// any value the user set by hand (user > AI > engine auto-default).
+let aiEnabled = store.get('ai.enabled', false);
+let aiAvailable = null;   // {ollama, available, model} from the health check
+let aiState = 'off';      // off | running | done | failed
+let aiResult = null;      // the advisor's full result (suggestions + second opinion)
+let aiOverrides = {};     // AI suggestions mapped to engine override keys
+let aiAbort = null;       // AbortController for the in-flight advisor call
+let aiRunId = 0;          // guards against a stale advisor resolving over a newer run
+let lastView = null;      // {r, baseline, aiApplied, aiHeld} — what renderResult resolved
+
+const LANE_RANK = { lane1: 0, lane2: 1, approve: 2 };
+
+// The verdict the engine reaches from ONLY code-certain facts + the user's own
+// overrides — no AI. This is the safety FLOOR: the code is untrusted, the local
+// model is prompt-injectable, so AI may add caution but must never silently make
+// the verdict lighter than this. A trusted human (a manual toggle) still can.
+function baselineResolve() { return resolve(cachedFacts, overrides); }
+
+// Resolve the displayed view with the clamp applied:
+//  - AI off / no suggestions  -> the baseline.
+//  - AI agrees or escalates    -> apply its suggestions (more caution is fail-safe).
+//  - AI would DE-escalate      -> HOLD it; keep the baseline and surface the AI's
+//                                 lighter read as an explicit, user-confirmable suggestion.
+function computeView() {
+  const baseline = baselineResolve();
+  if (aiState !== 'done' || !aiResult || !Object.keys(aiOverrides).length) {
+    return { r: baseline, baseline, aiApplied: false, aiHeld: false };
+  }
+  const withAI = resolve(cachedFacts, { ...aiOverrides, ...overrides });
+  if (LANE_RANK[withAI.verdict.key] < LANE_RANK[baseline.verdict.key]) {
+    return { r: baseline, baseline, aiApplied: false, aiHeld: true };   // refuse silent downgrade
+  }
+  return { r: withAI, baseline, aiApplied: true, aiHeld: false };
+}
+
+// Which assumption kinds are currently driven by the AI (and APPLIED, i.e. not
+// held back and not overridden by the user) — used to badge those rows as
+// AI-judged rather than blind-assumed.
+function aiDrivenKinds() {
+  const out = new Set();
+  if (!lastView || !lastView.aiApplied) return out;
+  for (const k of Object.keys(aiOverrides)) if (!(k in overrides)) out.add(k);
+  return out;
+}
+
+// Honest trust accounting: a condition with no assumption is read straight from
+// the code; one whose assumption the AI filled is "AI-judged" (NOT proven);
+// one the user set by hand is "you set"; anything still on the engine's blind
+// default is "assumed". This keeps AI inference visibly distinct from code fact.
+function trustCounts(r) {
+  const aiKinds = aiDrivenKinds();
+  let proven = 0, aiJudged = 0, userSet = 0, assumed = 0;
+  for (const c of r.conditions) {
+    if (!c.assumption) { proven++; continue; }
+    const kind = c.assumption.kind;
+    if (kind in overrides) userSet++;
+    else if (aiKinds.has(kind)) aiJudged++;
+    else assumed++;
+  }
+  return { proven, aiJudged, userSet, assumed };
+}
 
 // State lives on the canvas (drives the views) and is mirrored to the shell
 // (drives the analyzing sweep, the New-check button, and the drop hint).
@@ -102,6 +169,7 @@ const ICONS = {
   play: I('<path d="M8 5l11 7-11 7z"/>'),
   volume: I('<path d="M11 5L6 9H3v6h3l5 4z"/><path d="M16 9a3 3 0 0 1 0 6"/>'),
   mute: I('<path d="M11 5L6 9H3v6h3l5 4z"/><path d="M22 9l-6 6M16 9l6 6"/>'),
+  brain: I('<path d="M9 4a2.6 2.6 0 0 0-2.6 2.6c-1.3.2-2.4 1.3-2.4 2.7 0 .7.3 1.4.7 1.9-.5.5-.7 1.1-.7 1.8 0 1.3.9 2.4 2.2 2.7A2.6 2.6 0 0 0 9 20.5c.9 0 1.7-.5 2.1-1.2V5.2A2.6 2.6 0 0 0 9 4z"/><path d="M15 4a2.6 2.6 0 0 1 2.6 2.6c1.3.2 2.4 1.3 2.4 2.7 0 .7-.3 1.4-.7 1.9.5.5.7 1.1.7 1.8 0 1.3-.9 2.4-2.2 2.7A2.6 2.6 0 0 1 15 20.5c-.9 0-1.7-.5-2.1-1.2"/>'),
 };
 
 // Polite screen-reader announcer for the verdict.
@@ -236,6 +304,7 @@ async function run(loader) {
     clearInterval(timer);
     const reveal = () => { renderResult(); recordCheck(lastResult); setState('result'); };
     if (document.startViewTransition) document.startViewTransition(reveal); else reveal();
+    startAdvisor(); // optional local-AI refinement; no-op unless enabled + available
   } catch (err) {
     clearInterval(timer);
     setState('input');
@@ -259,7 +328,9 @@ function friendly(m) {
 function slugOf(r) { return r.meta.source === 'github' && r.meta.repoMeta.owner ? `${r.meta.repoMeta.owner}/${r.meta.repoMeta.repo}` : r.meta.label; }
 
 function renderResult() {
-  const r = resolve(cachedFacts, overrides);
+  const view = computeView();
+  const r = view.r;
+  lastView = view;
   lastResult = r;
   const outcome = OUTCOME[r.verdict.key];
   const v = VERDICT[outcome];
@@ -279,15 +350,18 @@ function renderResult() {
          <span><b>One change → ${esc(WOULDBE[lp.wouldBe] || 'lighter')}:</b> ${esc(lp.text)}${lighten.length > 1 ? ` <em>+${lighten.length - 1} more</em>` : ''}</span>
        </button>` : '';
 
-  const cert = r.certainty || { proven: 0, assumed: 0 };
+  const tc = trustCounts(r);
   const conf = r.confidence || { level: 'high', reasons: [] };
   const confChip = conf.level !== 'high'
     ? `<span class="t-sep">·</span><span class="t-conf t-conf-${conf.level}" title="${esc(conf.reasons.join(' '))}">${conf.level} confidence</span>` : '';
+  const sep = '<span class="t-sep">·</span>';
   const trust = `<button class="trust" id="trust-line" aria-label="See the full check">
-      <span class="t-proven">${ICONS.check} ${cert.proven} read from your code</span>
-      ${cert.assumed ? `<span class="t-sep">·</span><span class="t-assumed">${cert.assumed} assumed</span>` : ''}
+      <span class="t-proven">${ICONS.check} ${tc.proven} read from your code</span>
+      ${tc.aiJudged ? `${sep}<span class="t-ai">${tc.aiJudged} AI-judged</span>` : ''}
+      ${tc.userSet ? `${sep}<span class="t-assumed">${tc.userSet} you set</span>` : ''}
+      ${tc.assumed ? `${sep}<span class="t-assumed">${tc.assumed} assumed</span>` : ''}
       ${confChip}
-      <span class="t-sep">·</span><span class="t-link">see the full check</span>
+      ${sep}<span class="t-link">see the full check</span>
     </button>`;
 
   $('#result').dataset.outcome = outcome;
@@ -299,6 +373,7 @@ function renderResult() {
     <div class="story">${esc(v.story)}</div>
     <div class="caption"><span class="slug">${esc(slug)}</span> · looks like ${esc(pat)}</div>
     ${trust}
+    ${aiChipHTML()}
 
     <div class="reasons-eyebrow">${drivers.length && outcome !== 'ready' ? 'Here’s what decided it' : 'The all-clear'}</div>
     <div class="tiles">${tiles}</div>
@@ -315,6 +390,7 @@ function renderResult() {
   if (shell.dataset.dock === 'open') renderDrawer();   // keep an open dock in sync with the verdict
 
   $('#trust-line').addEventListener('click', openDrawer);
+  const aic = $('#ai-chip'); if (aic) aic.addEventListener('click', openDrawer);
   $('#cta').addEventListener('click', () => copyHandoff(r, v));
   $('#walk').addEventListener('click', () => startWalkthrough(r));
   const lb = $('#lighten-btn'); if (lb) lb.addEventListener('click', openLighten);
@@ -327,6 +403,99 @@ function renderResult() {
   $('#result').querySelectorAll('.nudge').forEach((n) => n.addEventListener('click', () => {
     setOverride(n.dataset.kind, n.dataset.flip); renderResult();
   }));
+}
+
+// ---- local-AI: chip on the card + agreement read ---------------------------
+// How the model's INDEPENDENT verdict sits next to the DETERMINISTIC baseline
+// (never the AI-influenced result — otherwise a poisoned downgrade would read as
+// "agrees"). Lighter than baseline = the strict check wins, surfaced honestly.
+function aiAgreement() {
+  const ai = aiResult && aiResult.secondOpinion && aiResult.secondOpinion.value;
+  if (!ai || !lastView) return null;
+  const det = lastView.baseline.verdict.key;
+  const L = aiVenue().label;
+  if (ai === det) return { kind: 'agree', text: `${L} agrees` };
+  const heavier = LANE_RANK[ai] > LANE_RANK[det];
+  return heavier
+    ? { kind: 'caution', text: `${L} is more cautious — it reads this as ${WOULDBE[ai] || ai}` }
+    : { kind: 'lighter', text: `${L} reads this lighter (${WOULDBE[ai] || ai}) — the strict check wins` };
+}
+
+// Honest "where it runs / what's sent" framing for whichever backend the
+// /api/llm proxy reports. The local Ollama proxy (server.js) reports no
+// `provider`, so this returns the original "Local AI · on your machine · nothing
+// uploaded" copy unchanged. A cloud proxy (Cloudflare → Gemini) reports
+// provider + model, so the copy honestly says the code digest is sent to the cloud.
+function aiVenue() {
+  const p = aiAvailable && aiAvailable.provider;
+  const local = !p || p === 'ollama' || p === 'local';
+  const model = (aiAvailable && aiAvailable.model) || DEFAULT_MODEL;
+  return local
+    ? { label: 'Local AI', at: 'on your machine', runs: 'runs entirely on your machine',
+        priv: 'Nothing left your computer.', ready: `${model} runs entirely on your machine — nothing is uploaded` }
+    : { label: 'Cloud AI', at: 'in the cloud', runs: 'runs in the cloud',
+        priv: 'The code digest is sent to the cloud model.', ready: `${model} runs in the cloud — the code digest is sent to the model` };
+}
+
+function aiChipHTML() {
+  if (aiState === 'running') {
+    const v = aiVenue();
+    return `<div class="ai-chip ai-running" aria-live="polite"><span class="ai-spin" aria-hidden="true"></span>${v.label} reviewing the code… <span class="ai-sub">~10s · ${v.at}</span></div>`;
+  }
+  if (aiState === 'done' && aiResult) {
+    // If the AI's read would lighten the verdict, we held it — say so plainly.
+    if (lastView && lastView.aiHeld) {
+      return `<button class="ai-chip ai-done ai-lighter" id="ai-chip" aria-label="${aiVenue().label} reads this lighter — review its take">
+          <span class="ai-spark" aria-hidden="true">${ICONS.brain}</span>${aiVenue().label} reads this lighter — the strict check holds<span class="ai-sub">review its take</span></button>`;
+    }
+    const a = aiAgreement();
+    if (!a) return '';
+    return `<button class="ai-chip ai-done ai-${a.kind}" id="ai-chip" aria-label="${esc(a.text)} — see the AI sanity check">
+        <span class="ai-spark" aria-hidden="true">${ICONS.brain}</span>${esc(a.text)}<span class="ai-sub">see why</span></button>`;
+  }
+  if (aiState === 'failed') {
+    return `<div class="ai-chip ai-failed">${ICONS.brain} ${aiVenue().label} unavailable — showing the deterministic check only.</div>`;
+  }
+  return '';
+}
+
+// Map the advisor's suggestions onto the engine's override keys. The model's
+// vocabulary lines up with the engine's, except: writeAuthority "none" collapses
+// to "scratch" (both = not a system of record), and humanReview is a boolean.
+// humanReview is only applied when logic is probabilistic (Yellow) — on a
+// deterministic tool it can't change the verdict and is the model's weakest field.
+function mapAiToOverrides(res) {
+  const o = {};
+  const s = res.suggestions || {};
+  if (s.dataScope) o.dataScope = s.dataScope.value;
+  if (s.reliance) o.reliance = s.reliance.value;
+  if (s.writeAuthority) o.writeAuthority = s.writeAuthority.value === 'authoritative' ? 'authoritative' : 'scratch';
+  if (s.humanReview && cachedFacts && cachedFacts.facts.probabilistic) o.humanReview = s.humanReview.value === 'yes';
+  return o;
+}
+
+// Kick off the advisor for the current corpus, then re-resolve with its
+// suggestions. Never blocks the deterministic verdict; safe to no-op.
+async function startAdvisor() {
+  if (!corpus || !aiEnabled || !(aiAvailable && aiAvailable.available)) return;
+  if (aiAbort) aiAbort.abort();
+  const myRun = ++aiRunId;
+  aiAbort = new AbortController();
+  aiState = 'running'; aiResult = null; aiOverrides = {};
+  renderResult();
+  let res;
+  try {
+    res = await runAdvisor(corpus, { model: (aiAvailable && aiAvailable.model) || DEFAULT_MODEL, signal: aiAbort.signal });
+  } catch { res = { ok: false }; }
+  if (myRun !== aiRunId) return;            // a newer run (or reset) superseded this one
+  if (res && res.ok) { aiResult = res; aiOverrides = mapAiToOverrides(res); aiState = 'done'; }
+  else { aiState = 'failed'; }
+  const reveal = () => { renderResult(); if (shell.dataset.dock === 'open') renderDrawer(); };
+  if (document.startViewTransition && aiState === 'done') document.startViewTransition(reveal); else reveal();
+  if (aiState === 'done') {
+    if (lastView && lastView.aiHeld) announce(`${aiVenue().label} reads this lighter, but the stricter deterministic check holds.`);
+    else { const a = aiAgreement(); if (a) announce(`${a.text}.`); }
+  }
 }
 
 // #1 — a driving reason tile that can spotlight the exact line in the real code.
@@ -547,11 +716,13 @@ function renderDrawer() {
   }).join('');
 
   const v = VERDICT[OUTCOME[r.verdict.key]];
-  const cert = r.certainty || { proven: 0, assumed: 0 };
+  const tc = trustCounts(r);
   const conf = r.confidence || { level: 'high', reasons: [] };
   const certBlock = `<div class="cert-block">
-      <span class="cert-proven">${ICONS.check} ${cert.proven} read straight from your code</span>
-      ${cert.assumed ? `<span class="cert-assumed">${cert.assumed} we had to assume — confirm below</span>` : '<span class="cert-assumed">nothing left to assume</span>'}
+      <span class="cert-proven">${ICONS.check} ${tc.proven} read straight from your code</span>
+      ${tc.aiJudged ? `<span class="cert-ai">${ICONS.brain} ${tc.aiJudged} judged by the local AI — adjust any below</span>` : ''}
+      ${tc.userSet ? `<span class="cert-assumed">${tc.userSet} you set by hand</span>` : ''}
+      ${tc.assumed ? `<span class="cert-assumed">${tc.assumed} we had to assume — confirm below</span>` : (!tc.aiJudged && !tc.userSet ? '<span class="cert-assumed">nothing left to assume</span>' : '')}
       ${conf.level !== 'high' ? `<span class="cert-conf cert-conf-${conf.level}">${conf.level} confidence — ${esc(conf.reasons[0] || '')}</span>` : ''}
     </div>`;
   const lighten = (r.lighten || []);
@@ -564,6 +735,7 @@ function renderDrawer() {
     <p style="font-size:13px;color:var(--muted);line-height:1.5;margin:10px 0 6px">
       ${esc(v.headline)} Every check below in plain words — adjust anything we had to assume and the verdict updates.
     </p>
+    ${aiBlockHTML()}
     ${certBlock}
     ${lightenBlock}
     ${rows}
@@ -575,6 +747,7 @@ function renderDrawer() {
   $('#drawer-body').querySelectorAll('.seg button').forEach((b) => b.addEventListener('click', () => {
     setOverride(b.dataset.kind, b.dataset.val); renderResult();   // renderResult refreshes the open dock
   }));
+  $('#ai-apply')?.addEventListener('click', applyAiRead);
   let techOn = false;
   $('#tech-toggle').addEventListener('click', () => {
     techOn = !techOn;
@@ -584,9 +757,66 @@ function renderDrawer() {
   });
 }
 
+// The AI sanity-check block at the top of the dock: the model's INDEPENDENT
+// verdict, how it sits next to the deterministic one, and the per-field reads
+// it contributed. Advisory only — clearly framed as not the decider.
+const AI_FIELD_LABEL = { dataScope: 'Data', reliance: 'Relied on by', writeAuthority: 'Write target', humanReview: 'Reviewed' };
+function aiBlockHTML() {
+  if (aiState === 'running') return `<div class="ai-block ai-block-running">${ICONS.brain} <b>${aiVenue().label}</b> is reading the code… <span class="ai-spin" aria-hidden="true"></span><div class="ai-bk-foot">~10s · ${aiVenue().runs}.</div></div>`;
+  if (aiState === 'failed') return `<div class="ai-block ai-block-failed">${ICONS.brain} ${aiVenue().label} sanity check unavailable. The deterministic check below is unaffected.</div>`;
+  if (aiState !== 'done' || !aiResult) return '';
+  const a = aiAgreement();
+  const held = !!(lastView && lastView.aiHeld);
+  const so = aiResult.secondOpinion;
+  const sugg = aiResult.suggestions || {};
+  const driven = aiDrivenKinds();
+  const fieldRows = ['dataScope', 'reliance', 'writeAuthority', 'humanReview'].map((k) => {
+    const s = sugg[k]; if (!s) return '';
+    const applied = driven.has(k);
+    return `<div class="ai-bk-field">
+      <span class="ai-bk-k">${esc(AI_FIELD_LABEL[k])}</span>
+      <span class="ai-bk-v">${esc(s.value)}${applied ? '' : ' <em>(not applied)</em>'}</span>
+      <span class="ai-bk-why">${esc(s.reason || '')}</span>
+    </div>`;
+  }).join('');
+  const verdictLabel = so ? (FOOT_VERDICT[so.value] || so.value) : '—';
+  const latency = aiResult.latencyMs ? ` · ${(aiResult.latencyMs / 1000).toFixed(1)}s` : '';
+  // When the AI's read is LIGHTER than the deterministic floor we don't apply it.
+  // It's offered as an explicit choice — applying it is a trusted human decision.
+  const heldBanner = held
+    ? `<div class="ai-held">The local AI reads this <b>lighter</b> than the strict check, so it’s <b>not applied</b> — the safer deterministic verdict stands. Since the code it read is untrusted, only you can accept a lighter read.
+         <button class="ai-apply" id="ai-apply">Use the AI’s read (you decide)</button></div>` : '';
+  const v = aiVenue();
+  const foot = held
+    ? `The deterministic engine decides; a lighter AI read is never applied on its own. ${v.priv}`
+    : `Advisory only — it fills the assumptions below; the deterministic engine still decides, and you can override any value. ${v.priv}`;
+  return `<div class="ai-block ai-${held ? 'lighter' : (a ? a.kind : 'agree')}">
+    <div class="ai-bk-head">${ICONS.brain} ${v.label} sanity check <span class="ai-bk-model">${esc(aiResult.model)} · ${v.at}${latency}</span></div>
+    ${so ? `<div class="ai-bk-verdict">Independent read: <b>${esc(verdictLabel)}</b>${a ? ` — ${esc(a.text.replace(/^(?:Local|Cloud) AI /, ''))}` : ''}</div>` : ''}
+    ${so && so.reason ? `<div class="ai-bk-reason">“${esc(so.reason)}”</div>` : ''}
+    ${heldBanner}
+    ${fieldRows ? `<div class="ai-bk-fields">${fieldRows}</div>` : ''}
+    <div class="ai-bk-foot">${foot}</div>
+  </div>`;
+}
+
+// The user explicitly accepts the AI's lighter read: promote its suggestions to
+// USER overrides (a trusted human decision), so the verdict re-resolves with them.
+function applyAiRead() {
+  if (!aiResult) return;
+  Object.assign(overrides, mapAiToOverrides(aiResult));
+  renderResult();
+  if (shell.dataset.dock === 'open') renderDrawer();
+}
+
 function assumeHTML(a) {
   const opts = a.options.map((o) => `<button data-kind="${esc(a.kind)}" data-val="${esc(o.value)}" class="${o.value === a.value ? 'on' : ''}">${esc(o.label)}</button>`).join('');
-  return `<div class="assume"><span class="q">${esc(QLABEL[a.kind] || 'Assumed')}</span><span class="seg">${opts}</span></div>`;
+  const aiDriven = aiDrivenKinds().has(a.kind);
+  const sugg = aiResult && aiResult.suggestions && aiResult.suggestions[a.kind];
+  const badge = aiDriven ? `<span class="ai-badge" title="Set by the local model — adjust to override">${ICONS.brain} AI</span>` : '';
+  const why = (aiDriven && sugg && sugg.reason)
+    ? `<div class="ai-assume-why"><b>${aiVenue().label}:</b> ${esc(sugg.reason)}</div>` : '';
+  return `<div class="assume"><span class="q">${esc(QLABEL[a.kind] || 'Assumed')}</span><span class="seg">${opts}</span>${badge}</div>${why}`;
 }
 
 // ============================================================================
@@ -594,6 +824,8 @@ function reset() {
   if (currentWalkClose) currentWalkClose(); else document.querySelector('.walk-overlay')?.remove();
   try { window.speechSynthesis.cancel(); } catch {}
   closeDrawer();
+  if (aiAbort) aiAbort.abort();
+  aiRunId++; aiState = 'off'; aiResult = null; aiOverrides = {};
   corpus = null; cachedFacts = null; overrides = {}; lastResult = null;
   setState('input');
   resetFooter();
@@ -669,9 +901,12 @@ function resetFooter() {
 // ---- recents (the History seam) — a lightweight record per check, never code -
 function recordCheck(r) {
   if (!r) return;
+  // Use the same honest accounting as the card/dock so a check reads identically
+  // in History (proven = read from code; everything else counts as assumed).
+  const tc = trustCounts(r);
   const list = store.get('recents', []);
   list.unshift({ slug: slugOf(r), source: r.meta.source, verdict: r.verdict.key,
-    proven: (r.certainty || {}).proven || 0, assumed: (r.certainty || {}).assumed || 0,
+    proven: tc.proven, assumed: tc.aiJudged + tc.userSet + tc.assumed,
     confidence: (r.confidence || {}).level || 'high' });
   store.set('recents', list.slice(0, 50));
   if (shell.dataset.side === 'open') renderSidebar();
@@ -714,6 +949,46 @@ function renderSidebar() {
   $('#side-clear')?.addEventListener('click', () => { store.set('recents', []); renderSidebar(); });
 }
 
+// ---- local-AI assist control -----------------------------------------------
+// Probe whether a local model is reachable, reflect it in the toggle, and never
+// let the probe throw — the app must work identically with no model present.
+async function initAI() {
+  syncAIToggle();                        // reflect the stored pref immediately
+  aiAvailable = await checkAvailable();  // ask the same-origin proxy / Ollama
+  syncAIToggle();
+}
+function syncAIToggle() {
+  const btn = $('#ai-toggle'); const txt = $('#ai-tg-txt'); const hint = $('#ai-hint');
+  if (!btn) return;
+  const reachable = !!(aiAvailable && aiAvailable.available);
+  btn.disabled = !reachable;
+  const on = aiEnabled && reachable;
+  btn.setAttribute('aria-checked', String(on));
+  btn.classList.toggle('on', on);
+  if (txt) txt.textContent = on ? 'On' : 'Off';
+  if (hint) {
+    if (aiAvailable == null) hint.textContent = 'Checking for an AI model…';
+    else if (!aiAvailable.ollama) hint.textContent = aiAvailable.provider
+      ? 'AI assist isn’t configured on the server yet.'
+      : 'No local model found. Start Ollama to enable an on-device second opinion.';
+    else if (!reachable) hint.textContent = `Ollama is running, but ${DEFAULT_MODEL} isn’t pulled (ollama pull ${DEFAULT_MODEL}).`;
+    else hint.textContent = `Ready · ${aiVenue().ready}.`;
+  }
+}
+function toggleAI() {
+  if (!(aiAvailable && aiAvailable.available)) return;
+  aiEnabled = !aiEnabled;
+  store.set('ai.enabled', aiEnabled);
+  syncAIToggle();
+  if (!aiEnabled) {                       // turning off → drop AI influence entirely
+    if (aiAbort) aiAbort.abort();
+    aiRunId++; aiState = 'off'; aiResult = null; aiOverrides = {};
+    if (card.dataset.state === 'result') { renderResult(); if (shell.dataset.dock === 'open') renderDrawer(); }
+  } else if (card.dataset.state === 'result' && corpus) {
+    startAdvisor();                       // turning on with a result up → run it now
+  }
+}
+
 // ---- wire the shell once ---------------------------------------------------
 function initShell() {
   renderRail();
@@ -732,6 +1007,10 @@ function initShell() {
   $('#new-check')?.addEventListener('click', reset);
   $('#dock-toggle')?.addEventListener('click', closeDrawer);
   $('#playbook-link')?.addEventListener('click', (e) => { e.preventDefault(); setBottom(true); });
+
+  // local-AI assist toggle + availability probe
+  $('#ai-toggle')?.addEventListener('click', toggleAI);
+  initAI();
 
   // expandable panels — left sidebar · bottom drawer · right dock
   renderSidebar();

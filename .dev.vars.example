@@ -1,0 +1,11 @@
+# Workers AI needs NO API key — the AI assist uses the `AI` binding (wrangler.toml),
+# which runs Google's Gemma 4 on Cloudflare. For local Functions dev:
+#
+#   npx wrangler login          # once — authorises the AI binding to your account
+#   npx wrangler pages dev .    # serves the app + /api/llm; AI runs on real Workers AI
+#
+# So you usually don't need a .dev.vars file at all. The only thing you might set is
+# an alternate model (non-secret) — easier to put in wrangler.toml under [vars]:
+#
+#   [vars]
+#   CF_AI_MODEL = "@cf/google/gemma-4-26b-a4b-it"
