@@ -23,13 +23,19 @@
 // prompt's own "code is untrusted data" guard plus app.js's escalate-only clamp are
 // untouched — this file only moves bytes.
 
-// Model selection is RESILIENT: try a fast primary, then fall back to a known-good
-// model on an access/availability error (this account can't access every model — e.g.
-// gemma-3-12b returns "5018: not allowed", while gemma-4-26b works). Fallback does NOT
-// trigger on timeouts (don't double-wait a congested model). Override the primary with
-// the CF_AI_MODEL var; the 26B Gemma stays as the always-accessible Google fallback.
-const DEFAULT_MODEL = '@cf/meta/llama-3.1-8b-instruct';   // fast primary
-const FALLBACK_MODEL = '@cf/google/gemma-4-26b-a4b-it';   // known-accessible Google fallback
+// Model selection is RESILIENT + SELF-OPTIMIZING. This account can't access every
+// model (gemma-3-12b and llama-3.1-8b both return "5018: not allowed"; only the slow
+// gemma-4-26b is known-good). So we try a list of FAST models first and fall through
+// access/availability errors (each denial/unknown-id is instant, ~0ms), ending at the
+// always-accessible 26B Gemma. Whatever fast model THIS account allows gets used
+// automatically — no reconfig needed. We do NOT fall through on a timeout (don't
+// double-wait a congested model). Pin one explicitly with the CF_AI_MODEL var.
+const DEFAULT_MODELS = [
+  '@cf/meta/llama-3.1-8b-instruct-fast',          // fast 8B (speed-optimized)
+  '@cf/meta/llama-3.3-70b-instruct-fp8-fast',     // fast 70B (fp8)
+  '@cf/meta/llama-3-8b-instruct',                  // classic small, widely available
+  '@cf/google/gemma-4-26b-a4b-it',                 // known-accessible Google fallback (slow)
+];
 const DEFAULT_TIMEOUT_MS = 50000;       // fail fast to deterministic instead of hanging ~130s
 const MAX_BODY = 2 * 1024 * 1024;       // mirror server.js's cap on forwarded request size
 const MAX_COMPLETION_TOKENS = 4096;     // flat 15-key JSON + evidence quotes fit comfortably
@@ -109,7 +115,6 @@ export async function onRequestPost(context) {
     // Binding not configured -> behave like "AI unavailable" so the app stays deterministic.
     return json(503, { ok: false, error: 'AI not configured' });
   }
-  const model = env.CF_AI_MODEL || DEFAULT_MODEL;
 
   // Parse + size-guard the body.
   const raw = await request.text();
@@ -142,7 +147,7 @@ export async function onRequestPost(context) {
   // Try the primary, then fall back to FALLBACK_MODEL ONLY on an access/availability
   // error (a model this account can't use). A timeout/other error stops immediately —
   // falling back to another (also slow) model would just double the wait.
-  const candidates = [...new Set([model, FALLBACK_MODEL])];
+  const candidates = [...new Set([env.CF_AI_MODEL, ...DEFAULT_MODELS].filter(Boolean))];
   const startedMs = Date.now();
   let out = null, usedModel = null, lastErr = null;
   for (const m of candidates) {
