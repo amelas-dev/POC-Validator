@@ -26,18 +26,25 @@ let overrides = {};
 let lastResult = null;
 let currentWalkClose = null;  // teardown handle for an active walkthrough overlay
 
-// ---- local-AI assist (optional) -------------------------------------------
-// The deterministic engine always decides. When AI assist is ON and a local
-// model is reachable, the advisor proposes values for the four un-inferable
-// assumptions; those feed the SAME resolver as user overrides, but rank below
-// any value the user set by hand (user > AI > engine auto-default).
-let aiEnabled = store.get('ai.enabled', false);
-let aiAvailable = null;   // {ollama, available, model} from the health check
+// ---- the reading engine (deterministic rules + judgment) ------------------
+// The app gives one read. The deterministic engine (src/engine) is its backbone
+// and safety floor — it decides the verdict from what the code PROVES. Four facts
+// can't be proven from code (is the data really Client/Fund? who relies on it? is
+// a write target authoritative? is every output reviewed?); a model reads the
+// actual code to judge those, and they feed the SAME resolver. This is woven into
+// the read silently — there is no "AI mode", no toggle, nothing to surface.
+//
+// One invariant is non-negotiable and stays enforced under the hood: the analyzed
+// code is untrusted and a model can be talked into anything by a comment, so a
+// judged read may add caution but may NEVER push the verdict below the engine's
+// cautious floor on its own. A lighter read only ever takes effect when the user
+// chooses it by hand (via the adjustable assumptions). See computeView().
+let aiAvailable = null;   // {ollama, available, model, provider} — where the read runs (for the privacy line)
 let aiState = 'off';      // off | running | done | failed
-let aiResult = null;      // the advisor's full result (suggestions + second opinion)
-let aiOverrides = {};     // AI suggestions mapped to engine override keys
-let aiAbort = null;       // AbortController for the in-flight advisor call
-let aiRunId = 0;          // guards against a stale advisor resolving over a newer run
+let aiResult = null;      // the judged read (suggestions for the four un-inferable facts)
+let aiOverrides = {};     // those judgments mapped to engine override keys
+let aiAbort = null;       // AbortController for the in-flight read
+let aiRunId = 0;          // guards against a stale read resolving over a newer run
 let lastView = null;      // {r, baseline, aiApplied, aiHeld} — what renderResult resolved
 
 const LANE_RANK = { lane1: 0, lane2: 1, approve: 2 };
@@ -285,28 +292,58 @@ function clearError() { $('#error').classList.remove('show'); }
 const PHASES = ['Reading your tool…', 'Checking what it touches…', 'Working out the verdict…'];
 function setPhase(msg) { const el = $('#phase'); if (el && msg) el.textContent = msg; }
 
+const MIN_DWELL_MS = 1150;      // a considered minimum, so the read never flickers past
+const READ_SOFT_CAP_MS = 3600;  // give the read a beat to land so the first answer is usually settled
+let revealRun = 0;              // guards the post-reveal settle update against a newer run
+let recordedRun = -1;
+
+// Record the read once, when it is final (the read has settled), not twice.
+function finalizeRead(run) {
+  if (recordedRun === run) return;
+  recordedRun = run;
+  recordCheck(lastResult);
+}
+
 async function run(loader) {
   clearError();
   overrides = {};
   setState('analyzing');
-  announce('Checking your tool…');
+  announce('Reading your tool…');
   let i = 0; setPhase(PHASES[0]);
   // Stop the generic rotation once it reaches the last phase so the loaders' granular
   // per-file progress ("Reading files… 7/40") can show through instead of being clobbered.
   const timer = setInterval(() => { i = Math.min(i + 1, PHASES.length - 1); setPhase(PHASES[i]); if (i === PHASES.length - 1) clearInterval(timer); }, 460);
-  const dwell = new Promise((r) => setTimeout(r, 1250));
+  const minDwell = new Promise((r) => setTimeout(r, MIN_DWELL_MS));
+  const myReveal = ++revealRun;
   try {
     const loaded = await loader();
     if (!loaded || !loaded.files || !loaded.files.length) throw new Error('No readable code files were found. Try a different repo, folder, or paste a snippet.');
     corpus = loaded;
     cachedFacts = extractFacts(corpus); // scan once; what-if toggles reuse this
-    await dwell;
+    // The read works the un-inferable judgments in the background. We hold the
+    // reveal a short beat so the first answer is usually already settled; if the
+    // read is slower (a local model), we reveal the engine's read now and let the
+    // judgment settle into it in place — it never blocks and never hangs.
+    const reading = startAdvisor();
+    await minDwell;
+    await Promise.race([reading, new Promise((r) => setTimeout(r, READ_SOFT_CAP_MS))]);
     clearInterval(timer);
-    const reveal = () => { renderResult(); recordCheck(lastResult); setState('result'); };
+    const settled = aiState !== 'running';
+    const reveal = () => { renderResult(); setState('result'); if (settled) finalizeRead(myReveal); };
     if (document.startViewTransition) document.startViewTransition(reveal); else reveal();
-    startAdvisor(); // optional local-AI refinement; no-op unless enabled + available
+    if (!settled) {
+      card.dataset.refining = 'on';   // a quiet "still settling" cue (subtle orb pulse)
+      reading.then(() => {
+        if (revealRun !== myReveal || card.dataset.state !== 'result') return;
+        card.removeAttribute('data-refining');
+        const upd = () => { renderResult(); if (shell.dataset.dock === 'open') renderDrawer(); };
+        if (document.startViewTransition && aiState === 'done') document.startViewTransition(upd); else upd();
+        finalizeRead(myReveal);
+      });
+    }
   } catch (err) {
     clearInterval(timer);
+    card.removeAttribute('data-refining');
     setState('input');
     const m = String((err && err.message) || err);
     if (NEEDS_TOKEN.test(m)) $('#token-row').classList.add('open'); // reveal exactly when needed
@@ -350,19 +387,12 @@ function renderResult() {
          <span><b>One change → ${esc(WOULDBE[lp.wouldBe] || 'lighter')}:</b> ${esc(lp.text)}${lighten.length > 1 ? ` <em>+${lighten.length - 1} more</em>` : ''}</span>
        </button>` : '';
 
-  const tc = trustCounts(r);
+  // One quiet way into the full check. Provenance counts are gone — the read is
+  // presented as a single answer — but a low-confidence read still says so.
   const conf = r.confidence || { level: 'high', reasons: [] };
-  const confChip = conf.level !== 'high'
-    ? `<span class="t-sep">·</span><span class="t-conf t-conf-${conf.level}" title="${esc(conf.reasons.join(' '))}">${conf.level} confidence</span>` : '';
-  const sep = '<span class="t-sep">·</span>';
-  const trust = `<button class="trust" id="trust-line" aria-label="See the full check">
-      <span class="t-proven">${ICONS.check} ${tc.proven} read from your code</span>
-      ${tc.aiJudged ? `${sep}<span class="t-ai">${tc.aiJudged} AI-judged</span>` : ''}
-      ${tc.userSet ? `${sep}<span class="t-assumed">${tc.userSet} you set</span>` : ''}
-      ${tc.assumed ? `${sep}<span class="t-assumed">${tc.assumed} assumed</span>` : ''}
-      ${confChip}
-      ${sep}<span class="t-link">see the full check</span>
-    </button>`;
+  const confNote = conf.level !== 'high'
+    ? `<span class="t-conf t-conf-${conf.level}" title="${esc(conf.reasons.join(' '))}">${conf.level} confidence</span><span class="t-sep">·</span>` : '';
+  const seeFull = `<button class="trust" id="trust-line" aria-label="See the full check">${confNote}<span class="t-link">see the full check</span></button>`;
 
   $('#result').dataset.outcome = outcome;
   $('#result').innerHTML = `
@@ -372,8 +402,7 @@ function renderResult() {
     </div>
     <div class="story">${esc(v.story)}</div>
     <div class="caption"><span class="slug">${esc(slug)}</span> · looks like ${esc(pat)}</div>
-    ${trust}
-    ${aiChipHTML()}
+    ${seeFull}
 
     <div class="reasons-eyebrow">${drivers.length && outcome !== 'ready' ? 'Here’s what decided it' : 'The all-clear'}</div>
     <div class="tiles">${tiles}</div>
@@ -390,7 +419,6 @@ function renderResult() {
   if (shell.dataset.dock === 'open') renderDrawer();   // keep an open dock in sync with the verdict
 
   $('#trust-line').addEventListener('click', openDrawer);
-  const aic = $('#ai-chip'); if (aic) aic.addEventListener('click', openDrawer);
   $('#cta').addEventListener('click', () => copyHandoff(r, v));
   $('#walk').addEventListener('click', () => startWalkthrough(r));
   const lb = $('#lighten-btn'); if (lb) lb.addEventListener('click', openLighten);
@@ -405,61 +433,16 @@ function renderResult() {
   }));
 }
 
-// ---- local-AI: chip on the card + agreement read ---------------------------
-// How the model's INDEPENDENT verdict sits next to the DETERMINISTIC baseline
-// (never the AI-influenced result — otherwise a poisoned downgrade would read as
-// "agrees"). Lighter than baseline = the strict check wins, surfaced honestly.
-function aiAgreement() {
-  const ai = aiResult && aiResult.secondOpinion && aiResult.secondOpinion.value;
-  if (!ai || !lastView) return null;
-  const det = lastView.baseline.verdict.key;
-  const L = aiVenue().label;
-  if (ai === det) return { kind: 'agree', text: `${L} agrees` };
-  const heavier = LANE_RANK[ai] > LANE_RANK[det];
-  return heavier
-    ? { kind: 'caution', text: `${L} is more cautious — it reads this as ${WOULDBE[ai] || ai}` }
-    : { kind: 'lighter', text: `${L} reads this lighter (${WOULDBE[ai] || ai}) — the strict check wins` };
-}
-
-// Honest "where it runs / what's sent" framing for whichever backend the
-// /api/llm proxy reports. The local Ollama proxy (server.js) reports no
-// `provider`, so this returns the original "Local AI · on your machine · nothing
-// uploaded" copy unchanged. A cloud proxy (Cloudflare → Gemini) reports
-// provider + model, so the copy honestly says the code digest is sent to the cloud.
-function aiVenue() {
+// The privacy line, phrased by where the read actually runs — never mentioning a
+// model. A local read stays on the device; otherwise the code is sent to a server
+// to be read (and we don't over-claim what happens to it there).
+function privacyLine() {
   const p = aiAvailable && aiAvailable.provider;
-  const local = !p || p === 'ollama' || p === 'local';
-  const model = (aiAvailable && aiAvailable.model) || DEFAULT_MODEL;
-  return local
-    ? { label: 'Local AI', at: 'on your machine', runs: 'runs entirely on your machine',
-        priv: 'Nothing left your computer.', ready: `${model} runs entirely on your machine — nothing is uploaded` }
-    : { label: 'Cloud AI', at: 'in the cloud', runs: 'runs in the cloud',
-        priv: 'The code digest is sent to the cloud model.', ready: `${model} runs in the cloud — the code digest is sent to the model` };
+  if (p === 'local') return 'Read-only · checked privately on your device.';
+  return 'Read-only · your code is only ever read, never changed.';
 }
 
-function aiChipHTML() {
-  if (aiState === 'running') {
-    const v = aiVenue();
-    return `<div class="ai-chip ai-running" aria-live="polite"><span class="ai-spin" aria-hidden="true"></span>${v.label} reviewing the code… <span class="ai-sub">~10s · ${v.at}</span></div>`;
-  }
-  if (aiState === 'done' && aiResult) {
-    // If the AI's read would lighten the verdict, we held it — say so plainly.
-    if (lastView && lastView.aiHeld) {
-      return `<button class="ai-chip ai-done ai-lighter" id="ai-chip" aria-label="${aiVenue().label} reads this lighter — review its take">
-          <span class="ai-spark" aria-hidden="true">${ICONS.brain}</span>${aiVenue().label} reads this lighter — the strict check holds<span class="ai-sub">review its take</span></button>`;
-    }
-    const a = aiAgreement();
-    if (!a) return '';
-    return `<button class="ai-chip ai-done ai-${a.kind}" id="ai-chip" aria-label="${esc(a.text)} — see the AI sanity check">
-        <span class="ai-spark" aria-hidden="true">${ICONS.brain}</span>${esc(a.text)}<span class="ai-sub">see why</span></button>`;
-  }
-  if (aiState === 'failed') {
-    return `<div class="ai-chip ai-failed">${ICONS.brain} ${aiVenue().label} unavailable — showing the deterministic check only.</div>`;
-  }
-  return '';
-}
-
-// Map the advisor's suggestions onto the engine's override keys. The model's
+// Map the judged read's suggestions onto the engine's override keys. The model's
 // vocabulary lines up with the engine's, except: writeAuthority "none" collapses
 // to "scratch" (both = not a system of record), and humanReview is a boolean.
 // humanReview is only applied when logic is probabilistic (Yellow) — on a
@@ -474,28 +457,24 @@ function mapAiToOverrides(res) {
   return o;
 }
 
-// Kick off the advisor for the current corpus, then re-resolve with its
-// suggestions. Never blocks the deterministic verdict; safe to no-op.
-async function startAdvisor() {
-  if (!corpus || !aiEnabled || !(aiAvailable && aiAvailable.available)) return;
+// Read the four un-inferable judgments from the actual code, in the background.
+// Always attempts (the server routes to a local model, or the hosted reader as a
+// silent fallback); if nothing answers it just leaves the engine's read in place.
+// Sets aiState and the judged overrides, but does NOT render — run() owns the
+// reveal timing. Resolves when the read settles (or can't run); never throws.
+function startAdvisor() {
+  if (!corpus) { aiState = 'off'; return Promise.resolve(); }
   if (aiAbort) aiAbort.abort();
   const myRun = ++aiRunId;
   aiAbort = new AbortController();
   aiState = 'running'; aiResult = null; aiOverrides = {};
-  renderResult();
-  let res;
-  try {
-    res = await runAdvisor(corpus, { model: (aiAvailable && aiAvailable.model) || DEFAULT_MODEL, signal: aiAbort.signal });
-  } catch { res = { ok: false }; }
-  if (myRun !== aiRunId) return;            // a newer run (or reset) superseded this one
-  if (res && res.ok) { aiResult = res; aiOverrides = mapAiToOverrides(res); aiState = 'done'; }
-  else { aiState = 'failed'; }
-  const reveal = () => { renderResult(); if (shell.dataset.dock === 'open') renderDrawer(); };
-  if (document.startViewTransition && aiState === 'done') document.startViewTransition(reveal); else reveal();
-  if (aiState === 'done') {
-    if (lastView && lastView.aiHeld) announce(`${aiVenue().label} reads this lighter, but the stricter deterministic check holds.`);
-    else { const a = aiAgreement(); if (a) announce(`${a.text}.`); }
-  }
+  return runAdvisor(corpus, { model: DEFAULT_MODEL, signal: aiAbort.signal })
+    .catch(() => ({ ok: false }))
+    .then((res) => {
+      if (myRun !== aiRunId) return;          // a newer run (or reset) superseded this one
+      if (res && res.ok) { aiResult = res; aiOverrides = mapAiToOverrides(res); aiState = 'done'; }
+      else { aiState = 'failed'; }
+    });
 }
 
 // #1 — a driving reason tile that can spotlight the exact line in the real code.
@@ -670,6 +649,7 @@ $('#scrim')?.addEventListener('click', () => { closeDrawer(); setSidebar(false);
 $('#drawer-close').addEventListener('click', closeDrawer);
 window.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
+  if (setOverlay && !setOverlay.hidden) { closeSettings(); return; }
   if (currentWalkClose) { currentWalkClose(); return; }
   if (shell.dataset.dock === 'open') { closeDrawer(); return; }
   if (shell.dataset.side === 'open') { setSidebar(false); return; }
@@ -877,7 +857,213 @@ function applyTheme(mode) {
   if (mode === 'auto') document.documentElement.removeAttribute('data-theme');
   else document.documentElement.setAttribute('data-theme', mode);
   store.set('theme', mode);
-  $('#theme-seg')?.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.theme === mode));
+  // every theme segment on the page (header quick-menu + settings page) stays in sync
+  document.querySelectorAll('.theme-seg button').forEach((b) => b.classList.toggle('on', b.dataset.theme === mode));
+}
+
+// ============================================================================
+//  Settings — a full overlay with a section sidebar. One registry row per
+//  section; each renders its own pane. The header quick-menu and this page share
+//  the SAME theme/AI controls (class-based sync in applyTheme/syncAIToggle), so
+//  the two never drift. Adding a section = one row in SETTINGS_SECTIONS.
+// ============================================================================
+const APP_VERSION = '1.0.0';
+
+const SET_ICON = {
+  appearance: '<circle cx="12" cy="12" r="4"/><path d="M12 3v2M12 19v2M21 12h-2M5 12H3M18.4 5.6l-1.4 1.4M7 17l-1.4 1.4M18.4 18.4 17 17M7 7 5.6 5.6"/>',
+  ai: '<path d="M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z"/><circle cx="18" cy="17.5" r="1.5"/>',
+  privacy: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/>',
+  about: '<circle cx="12" cy="12" r="9"/><path d="M12 11.5v5"/><circle cx="12" cy="7.8" r="1" fill="currentColor" stroke="none"/>',
+};
+
+const SETTINGS_SECTIONS = [
+  { id: 'appearance', label: 'Appearance',      render: renderSetAppearance },
+  { id: 'ai',         label: 'AI assist',       render: renderSetAI },
+  { id: 'privacy',    label: 'Privacy & data',  render: renderSetPrivacy },
+  { id: 'about',      label: 'About',           render: renderSetAbout },
+];
+
+let setOverlay = null;        // the lazily-built overlay element (reused)
+let setReturnFocus = null;    // element to restore focus to on close
+let setActive = 'appearance'; // remembered section across opens
+
+function buildSettings() {
+  const ov = document.createElement('div');
+  ov.className = 'set-overlay';
+  ov.setAttribute('role', 'dialog');
+  ov.setAttribute('aria-modal', 'true');
+  ov.setAttribute('aria-label', 'Settings');
+  ov.hidden = true;
+  ov.innerHTML = `
+    <div class="set-window">
+      <header class="set-top">
+        <span class="set-title">Settings</span>
+        <button class="set-x" type="button" aria-label="Close settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
+        </button>
+      </header>
+      <div class="set-main">
+        <nav class="set-nav" aria-label="Settings sections">${SETTINGS_SECTIONS.map((s) => `
+          <button class="set-navitem" type="button" data-sec="${s.id}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${SET_ICON[s.id]}</svg>
+            <span>${esc(s.label)}</span>
+          </button>`).join('')}
+        </nav>
+        <div class="set-content" id="set-content" tabindex="-1"></div>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+
+  ov.addEventListener('click', (e) => { if (e.target === ov) closeSettings(); });        // backdrop
+  ov.querySelector('.set-x').addEventListener('click', closeSettings);
+  ov.querySelector('.set-nav').addEventListener('click', (e) => {
+    const b = e.target.closest('.set-navitem'); if (b) selectSettings(b.dataset.sec);
+  });
+  // delegated controls live inside the re-rendered content pane
+  ov.querySelector('.set-content').addEventListener('click', (e) => {
+    // scope to the seg buttons — a bare [data-theme] would also match <html>, which
+    // carries data-theme when a theme is locked, swallowing every other click here
+    const themeBtn = e.target.closest('button[data-theme]');
+    if (themeBtn) { applyTheme(themeBtn.dataset.theme); return; }
+    if (e.target.closest('.ai-toggle')) { toggleAI(); return; }
+    const act = e.target.closest('[data-act]')?.dataset.act;
+    if (act === 'clear-recents') { store.set('recents', []); renderSidebar(); renderSettingsBody(); }
+    else if (act === 'open-playbook') { closeSettings(); setBottom(true); }
+  });
+  return ov;
+}
+
+function openSettings() {
+  if (!setOverlay) setOverlay = buildSettings();
+  setReturnFocus = document.activeElement;
+  setOverlay.hidden = false;
+  shell.setAttribute('inert', '');     // park the app behind the modal
+  renderSettingsBody();
+  requestAnimationFrame(() => setOverlay.querySelector(`.set-navitem[data-sec="${setActive}"]`)?.focus());
+}
+function closeSettings() {
+  if (!setOverlay || setOverlay.hidden) return;
+  setOverlay.hidden = true;
+  shell.removeAttribute('inert');
+  if (setReturnFocus && setReturnFocus.focus) setReturnFocus.focus();
+}
+function selectSettings(id) {
+  if (!SETTINGS_SECTIONS.some((s) => s.id === id)) return;
+  setActive = id;
+  renderSettingsBody();
+  setOverlay?.querySelector('#set-content')?.focus();
+}
+function renderSettingsBody() {
+  if (!setOverlay) return;
+  setOverlay.querySelectorAll('.set-navitem').forEach((b) => {
+    const on = b.dataset.sec === setActive;
+    b.classList.toggle('on', on);
+    if (on) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
+  });
+  const sec = SETTINGS_SECTIONS.find((s) => s.id === setActive) || SETTINGS_SECTIONS[0];
+  const host = setOverlay.querySelector('#set-content');
+  host.innerHTML = sec.render();
+  host.scrollTop = 0;
+  // re-sync the shared controls so the freshly rendered pane reflects live state
+  applyTheme(store.get('theme', 'auto'));
+  syncAIToggle();
+}
+
+function renderSetAppearance() {
+  return `
+    <div class="set-pane">
+      <h3 class="set-h">Appearance</h3>
+      <p class="set-sub">How Lane looks on this device. Remembered in this browser only.</p>
+      <div class="set-card">
+        <div class="set-row">
+          <div class="set-rl">
+            <div class="set-rt">Theme</div>
+            <div class="set-rd">Follow your system, or lock to light or dark.</div>
+          </div>
+          <div class="seg theme-seg">
+            <button type="button" data-theme="auto">Auto</button>
+            <button type="button" data-theme="light">Light</button>
+            <button type="button" data-theme="dark">Dark</button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+
+function renderSetAI() {
+  return `
+    <div class="set-pane">
+      <h3 class="set-h">AI assist</h3>
+      <p class="set-sub">An optional second opinion, off by default. The deterministic engine always makes the call — AI can only add caution, never remove it.</p>
+      <div class="set-card">
+        <div class="set-row">
+          <div class="set-rl">
+            <div class="set-rt">Enable AI assist</div>
+            <div class="set-rd">Fills the four judgment calls the code can’t prove, plus an independent read of the lane.</div>
+          </div>
+          <button class="ai-toggle" type="button" role="switch" aria-checked="false" disabled>
+            <span class="ai-tg-track" aria-hidden="true"><span class="ai-tg-thumb"></span></span>
+            <span class="ai-tg-txt">Off</span>
+          </button>
+        </div>
+        <div class="set-row set-row-foot">
+          <p class="ai-hint set-hint">Checking for an AI model…</p>
+        </div>
+      </div>
+    </div>`;
+}
+
+function renderSetPrivacy() {
+  const n = store.get('recents', []).length;
+  return `
+    <div class="set-pane">
+      <h3 class="set-h">Privacy &amp; data</h3>
+      <p class="set-sub">Lane runs entirely in your browser. There is no account and nothing is stored on a server.</p>
+      <div class="set-card">
+        <div class="set-row">
+          <div class="set-rl">
+            <div class="set-rt">On-device only</div>
+            <div class="set-rd">Your code is read and scored locally — nothing is uploaded.</div>
+          </div>
+          <span class="set-badge">Read-only</span>
+        </div>
+        <div class="set-row">
+          <div class="set-rl">
+            <div class="set-rt">Recent checks</div>
+            <div class="set-rd">${n ? `${n} check${n === 1 ? '' : 's'} remembered on this device.` : 'Nothing saved yet.'}</div>
+          </div>
+          <button class="set-btn danger" type="button" data-act="clear-recents" ${n ? '' : 'disabled'}>Clear history</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+function renderSetAbout() {
+  return `
+    <div class="set-pane">
+      <h3 class="set-h">About</h3>
+      <p class="set-sub">A quick read on where a proof-of-concept should be hosted, and why.</p>
+      <div class="set-card set-about">
+        <span class="set-about-mark" aria-hidden="true">
+          <svg viewBox="0 0 32 32"><g fill="currentColor"><rect x="8" y="17" width="3.4" height="7" rx="1.5"/><rect x="14.3" y="12" width="3.4" height="12" rx="1.5"/><rect x="20.6" y="8" width="3.4" height="16" rx="1.5"/></g></svg>
+        </span>
+        <div class="set-about-tx">
+          <div class="set-rt">Lane — POC Validator</div>
+          <div class="set-rd">A deterministic rules engine triages a POC into Lane 1, Lane 2, or sign-off, straight from its code.</div>
+        </div>
+        <span class="set-ver">v${esc(APP_VERSION)}</span>
+      </div>
+      <div class="set-card">
+        <button class="set-row set-row-link" type="button" data-act="open-playbook">
+          <div class="set-rl">
+            <div class="set-rt">POC triage &amp; hosting playbook</div>
+            <div class="set-rd">The lanes, and what pushes a tool heavier.</div>
+          </div>
+          <svg class="set-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+        </button>
+      </div>
+      <p class="set-foot">A quick read, not the final word — your AI operations lead makes the hosting call.</p>
+    </div>`;
 }
 
 // ---- status footer ---------------------------------------------------------
@@ -958,22 +1144,22 @@ async function initAI() {
   syncAIToggle();
 }
 function syncAIToggle() {
-  const btn = $('#ai-toggle'); const txt = $('#ai-tg-txt'); const hint = $('#ai-hint');
-  if (!btn) return;
   const reachable = !!(aiAvailable && aiAvailable.available);
-  btn.disabled = !reachable;
   const on = aiEnabled && reachable;
-  btn.setAttribute('aria-checked', String(on));
-  btn.classList.toggle('on', on);
-  if (txt) txt.textContent = on ? 'On' : 'Off';
-  if (hint) {
-    if (aiAvailable == null) hint.textContent = 'Checking for an AI model…';
-    else if (!aiAvailable.ollama) hint.textContent = aiAvailable.provider
-      ? 'AI assist isn’t configured on the server yet.'
-      : 'No local model found. Start Ollama to enable an on-device second opinion.';
-    else if (!reachable) hint.textContent = `Ollama is running, but ${DEFAULT_MODEL} isn’t pulled (ollama pull ${DEFAULT_MODEL}).`;
-    else hint.textContent = `Ready · ${aiVenue().ready}.`;
-  }
+  // every AI toggle on the page (header quick-menu + settings page) stays in sync
+  document.querySelectorAll('.ai-toggle').forEach((btn) => {
+    btn.disabled = !reachable;
+    btn.setAttribute('aria-checked', String(on));
+    btn.classList.toggle('on', on);
+    const txt = btn.querySelector('.ai-tg-txt'); if (txt) txt.textContent = on ? 'On' : 'Off';
+  });
+  const hint = (aiAvailable == null) ? 'Checking for an AI model…'
+    : !aiAvailable.ollama ? (aiAvailable.provider
+        ? 'AI assist isn’t configured on the server yet.'
+        : 'No local model found. Start Ollama to enable an on-device second opinion.')
+    : !reachable ? `Ollama is running, but ${DEFAULT_MODEL} isn’t pulled (ollama pull ${DEFAULT_MODEL}).`
+    : `Ready · ${aiVenue().ready}.`;
+  document.querySelectorAll('.ai-hint').forEach((el) => { el.textContent = hint; });
 }
 function toggleAI() {
   if (!(aiAvailable && aiAvailable.available)) return;
@@ -999,7 +1185,7 @@ function initShell() {
   const closeOpts = () => { optsMenu.hidden = true; optsBtn.setAttribute('aria-expanded', 'false'); };
   const toggleOpts = () => { const open = optsMenu.hidden; optsMenu.hidden = !open; optsBtn.setAttribute('aria-expanded', String(open)); };
   optsBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleOpts(); });
-  $('#settings-btn')?.addEventListener('click', (e) => { e.stopPropagation(); toggleOpts(); });
+  $('#settings-btn')?.addEventListener('click', (e) => { e.stopPropagation(); closeOpts(); openSettings(); });
   optsMenu.addEventListener('click', (e) => e.stopPropagation());
   document.addEventListener('click', closeOpts);
   $('#theme-seg')?.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => applyTheme(b.dataset.theme)));
@@ -1008,8 +1194,8 @@ function initShell() {
   $('#dock-toggle')?.addEventListener('click', closeDrawer);
   $('#playbook-link')?.addEventListener('click', (e) => { e.preventDefault(); setBottom(true); });
 
-  // local-AI assist toggle + availability probe
-  $('#ai-toggle')?.addEventListener('click', toggleAI);
+  // local-AI assist availability probe (the toggle now lives on the Settings page,
+  // wired via delegation in buildSettings)
   initAI();
 
   // expandable panels — left sidebar · bottom drawer · right dock
