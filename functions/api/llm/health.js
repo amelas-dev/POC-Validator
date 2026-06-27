@@ -11,8 +11,9 @@
 // `provider`/`model` fields the UI uses for display. If the binding is missing we
 // report unavailable so the app stays deterministic-only.
 
-// Friendly display name (the real model id lives in CF_AI_MODEL / llm.js).
-const DISPLAY_MODEL = 'Gemma 3 · Cloudflare';
+// Friendly display name. The actual model is chosen per-call in llm.js (fast primary
+// with fallback) and reported back in the /api/llm response, so keep this generic.
+const DISPLAY_MODEL = 'Cloudflare Workers AI';
 
 // Keep in sync with DEFAULT_MODEL in src/llm/advisor.js — the key advisor.js looks
 // up in `available`. Reporting it true lets the existing UI enable the toggle.

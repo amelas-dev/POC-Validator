@@ -23,11 +23,13 @@
 // prompt's own "code is untrusted data" guard plus app.js's escalate-only clamp are
 // untouched — this file only moves bytes.
 
-// Gemma 3 12B (Google) — chosen over the 26B for LATENCY + free-tier capacity: the
-// 26B intermittently exceeds the browser's 130s timeout under load. Override with the
-// CF_AI_MODEL var (e.g. "@cf/google/gemma-4-26b-a4b-it" for max quality, or
-// "@cf/meta/llama-3.1-8b-instruct-fast" for max speed).
-const DEFAULT_MODEL = '@cf/google/gemma-3-12b-it';
+// Model selection is RESILIENT: try a fast primary, then fall back to a known-good
+// model on an access/availability error (this account can't access every model — e.g.
+// gemma-3-12b returns "5018: not allowed", while gemma-4-26b works). Fallback does NOT
+// trigger on timeouts (don't double-wait a congested model). Override the primary with
+// the CF_AI_MODEL var; the 26B Gemma stays as the always-accessible Google fallback.
+const DEFAULT_MODEL = '@cf/meta/llama-3.1-8b-instruct';   // fast primary
+const FALLBACK_MODEL = '@cf/google/gemma-4-26b-a4b-it';   // known-accessible Google fallback
 const DEFAULT_TIMEOUT_MS = 50000;       // fail fast to deterministic instead of hanging ~130s
 const MAX_BODY = 2 * 1024 * 1024;       // mirror server.js's cap on forwarded request size
 const MAX_COMPLETION_TOKENS = 4096;     // flat 15-key JSON + evidence quotes fit comfortably
@@ -128,32 +130,46 @@ export async function onRequestPost(context) {
   const seed = typeof opts.seed === 'number' ? opts.seed : 0;
 
   const timeoutMs = Number(env.CF_AI_TIMEOUT_MS) || DEFAULT_TIMEOUT_MS;
+  const aiInput = {
+    messages: [{ role: 'user', content: prompt }],
+    temperature,
+    seed,
+    max_completion_tokens: MAX_COMPLETION_TOKENS,
+    // Best-effort structured output; the prompt also demands this exact flat shape,
+    // and extraction below tolerates either a parsed object or a JSON string.
+    response_format: { type: 'json_schema', json_schema: RESPONSE_SCHEMA },
+  };
+  // Try the primary, then fall back to FALLBACK_MODEL ONLY on an access/availability
+  // error (a model this account can't use). A timeout/other error stops immediately —
+  // falling back to another (also slow) model would just double the wait.
+  const candidates = [...new Set([model, FALLBACK_MODEL])];
   const startedMs = Date.now();
-  try {
-    const aiCall = env.AI.run(model, {
-      messages: [{ role: 'user', content: prompt }],
-      temperature,
-      seed,
-      max_completion_tokens: MAX_COMPLETION_TOKENS,
-      // Best-effort structured output; the prompt also demands this exact flat shape,
-      // and extraction below tolerates either a parsed object or a JSON string.
-      response_format: { type: 'json_schema', json_schema: RESPONSE_SCHEMA },
-    });
-    // Fail fast on a slow/congested model so the app drops to its deterministic verdict
-    // quickly, instead of the browser hanging until its own 130s timeout.
-    const out = await Promise.race([
-      aiCall,
-      new Promise((_, reject) => setTimeout(() => reject(new Error('model timeout')), timeoutMs)),
-    ]);
-
-    const jsonStr = coerceJsonString(extractText(out));
-    if (!jsonStr) return json(502, { ok: false, error: 'AI unavailable', detail: 'unparseable model output' });
-
-    const tookMs = Math.max(0, Date.now() - startedMs);
-    // Ollama-shaped envelope: advisor.js does JSON.parse(outer.response) and reads
-    // total_duration (nanoseconds) for its latency badge.
-    return json(200, { response: jsonStr, total_duration: tookMs * 1e6, model, done: true });
-  } catch (e) {
-    return json(503, { ok: false, error: 'AI unavailable', detail: String((e && e.message) || e) });
+  let out = null, usedModel = null, lastErr = null;
+  for (const m of candidates) {
+    try {
+      out = await Promise.race([
+        env.AI.run(m, aiInput),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('model timeout')), timeoutMs)),
+      ]);
+      usedModel = m;
+      break;
+    } catch (e) {
+      lastErr = e;
+      const msg = String((e && e.message) || e);
+      // Only an access/availability error is worth trying the next model for.
+      if (!/not allowed|5\d{3}|no such model|not found|capacity|unavailable/i.test(msg)) break;
+    }
   }
+  if (out == null) {
+    return json(503, { ok: false, error: 'AI unavailable', detail: String((lastErr && lastErr.message) || lastErr || 'no model available') });
+  }
+
+  const jsonStr = coerceJsonString(extractText(out));
+  if (!jsonStr) return json(502, { ok: false, error: 'AI unavailable', detail: 'unparseable model output' });
+
+  const tookMs = Math.max(0, Date.now() - startedMs);
+  // Ollama-shaped envelope: advisor.js does JSON.parse(outer.response) and reads
+  // total_duration (nanoseconds) for its latency badge. `usedModel` is whichever
+  // candidate actually answered (shown in the UI's AI block).
+  return json(200, { response: jsonStr, total_duration: tookMs * 1e6, model: usedModel, done: true });
 }
