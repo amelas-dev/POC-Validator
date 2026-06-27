@@ -29,10 +29,33 @@ const SCOPE_BENIGN = /[.#][\w-]*(restricted|confidential)|class\s*=\s*['"][^'"]*
 // A POST to an external API is only a *write* when its path looks like one —
 // POST is also how AI / GraphQL / search APIs are queried, so method alone
 // can't decide. PUT/PATCH/DELETE are unambiguous writes (handled by METHOD_WRITE).
-const WRITE_PATH = '(records?|create|update|save|insert|write|entries|ledger|payments?|sign[-_]?off|submit|upload|transactions?|invoices?|allocations?)';
-const MUTATING_FETCH_EXTERNAL = new RegExp(`(fetch|axios)\\s*\\(\\s*['"\`]https?:\\/\\/(?!([a-z0-9.-]*\\.)?gpfundsolutions\\.com)[^'"\`]*\\/${WRITE_PATH}\\b[^'"\`]*['"\`]\\s*,[^;]{0,300}?\\bmethod\\b\\s*:\\s*['"\`]post`, 'i');
-// Same-origin relative POST to a write-y path (NOT the /api/chat proxy) is a write.
-const RELATIVE_POST_WRITE = new RegExp(`(fetch|axios)\\s*\\(\\s*['"\`]\\/(?!api\\/chat\\b)[^'"\`]*\\/${WRITE_PATH}\\b[^'"\`]*['"\`]\\s*,[^;]{0,300}?\\bmethod\\b\\s*:\\s*['"\`]post`, 'i');
+// Collection nouns (customers/users/accounts/…) are record writes too; /graphql, /search,
+// /query are deliberately NOT here (a POST to them is a query, not a write).
+const WRITE_PATH = '(records?|create|update|save|insert|write|entries|ledger|payments?|sign[-_]?off|submit|upload|transactions?|invoices?|allocations?|customers?|users?|accounts?|contacts?|orders?|clients?|members?|leads?|profiles?)';
+const WRITE_PATH_RE = new RegExp(`/${WRITE_PATH}\\b`, 'i');
+const GPFS_HOST_RE = /^https?:\/\/([a-z0-9.-]*\.)?gpfundsolutions\.com/i;
+// A fetch/axios call whose first argument is a quoted URL, captured ATOMICALLY as a single
+// bounded run up to the matching quote (a `\1` backreference to the opening quote), with a
+// method:POST within the call. We then test the captured URL for a write-y path in JS. This
+// replaces the old MUTATING_FETCH_EXTERNAL/RELATIVE_POST_WRITE, whose twin unbounded `[^'"`]*`
+// runs straddling the WRITE_PATH alternation backtracked catastrophically (~28s on one 256KB
+// quote-less file). Linear here: the URL body is one bounded class with no overlap.
+const FETCH_POST_CALL = /\b(?:fetch|axios)\s*\(\s*(['"`])(https?:\/\/[^'"`]{0,2048}|\/[^'"`]{0,2048})\1\s*,[^;]{0,300}?\bmethod\b\s*:\s*['"`]post/gi;
+function hasFetchPostWrite(clean) {
+  FETCH_POST_CALL.lastIndex = 0;
+  let m;
+  while ((m = FETCH_POST_CALL.exec(clean)) !== null) {
+    const url = m[2];
+    if (url[0] === '/') {
+      if (/^\/api\/chat\b/i.test(url)) continue;   // the approved same-origin proxy is not a write
+      if (WRITE_PATH_RE.test(url)) return true;
+    } else {
+      if (GPFS_HOST_RE.test(url)) continue;        // same-company host is allowlisted
+      if (WRITE_PATH_RE.test(url)) return true;
+    }
+  }
+  return false;
+}
 const XHR_MUTATE_EXTERNAL = /\.open\s*\(\s*['"`](put|patch|delete)['"`]\s*,\s*['"`]https?:\/\//i;
 const SHARED_PATH_WRITE = /(\.save|writefile\w*|to_csv|write_csv|wb\.save|savefig|\.to_excel)\s*\(\s*['"`](\\\\|\/\/)[a-z0-9._-]+[\\/]/i;
 // ORM-chain writes (Drizzle/Kysely .update(t).set(…)) and Go (gorm / http.NewRequest).
@@ -42,7 +65,11 @@ const GO_WRITE = /\b(db|tx)\.(Create|Save|Updates?|Delete|FirstOrCreate)\s*\(|\b
 // Restricted-data detection: a strong entity anywhere, or "restricted"/
 // "confidential" in a non-CSS / non-markup line. Operates on comment-stripped text.
 function detectRestricted(cleanFiles) {
-  if (cleanFiles.some((f) => STRONG_ENTITY.test(f.clean) || STRONG_ACRONYM.test(f.clean))) return true;
+  // Normalize identifier separators so snake_case / kebab-case entities (investor_capital_account,
+  // fund-nav) read the same as their spaced forms. STRONG_ACRONYM stays case-sensitive on the
+  // raw text (real NAV/AUM are uppercase; fund_nav is lowercase and matched via STRONG_ENTITY).
+  const norm = (s) => s.replace(/[_-]+/g, ' ');
+  if (cleanFiles.some((f) => STRONG_ENTITY.test(norm(f.clean)) || STRONG_ACRONYM.test(f.clean))) return true;
   for (const f of cleanFiles) {
     const e = (f.path.split('.').pop() || '').toLowerCase();
     if (['css', 'scss', 'sass', 'less'].includes(e)) continue; // stylesheet "restricted" is never data
@@ -60,18 +87,39 @@ function isMinified(text) {
   const maxLine = lines.reduce((m, l) => Math.max(m, l.length), 0);
   return maxLine > 1500 || (text.length > 2000 && text.length / lines.length > 400);
 }
-const VENDOR_HOST = /(api\.(anthropic|openai|cohere|mistral|groq)\.|[a-z0-9-]+\.openai\.azure\.com|openai\.azure\.com|generativelanguage\.googleapis\.com|api-inference\.huggingface\.co|api\.replicate\.com|bedrock(-runtime)?\.[a-z0-9-]+\.amazonaws\.com)/i;
+// Host-label runs are length-BOUNDED ({1,40}) so testing this over a large file body can't
+// backtrack quadratically on a long [a-z0-9-] run (real subdomain labels are short anyway).
+const VENDOR_HOST = /(api\.(anthropic|openai|cohere|mistral|groq)\.|[a-z0-9-]{1,40}\.openai\.azure\.com|openai\.azure\.com|generativelanguage\.googleapis\.com|api-inference\.huggingface\.co|api\.replicate\.com|bedrock(-runtime)?\.[a-z0-9-]{1,40}\.amazonaws\.com)/i;
 // The chat-completions payload shape is a reliable AI-call fingerprint even when
 // the host/SDK are obfuscated (string-assembled, dynamic import, env var). The
 // key/value separator is language-agnostic: JS object `model: 'gpt-…'`, JSON /
 // Python-dict `"model": "gpt-…"`, Python kwargs / C# anon `model = "gpt-…"` —
 // so the keys may be quoted and the separator may be `:` or `=`.
-const AI_PAYLOAD = /\bmessages\b["'`]?\s*[:=]\s*\[\s*\{[^]*?\brole\b["'`]?\s*[:=]\s*['"`](system|user|assistant)['"`][^]*?\bcontent\b/i;
+// Lazy gaps are BOUNDED ({0,2000}) so a `messages:[{role:…}]` with no nearby `content` key
+// can't drive quadratic backtracking on a large file (the role→content distance in a real
+// payload is tiny). Callers also gate this behind a cheap `/\bcontent\b/` pre-test.
+const AI_PAYLOAD = /\bmessages\b["'`]?\s*[:=]\s*\[\s*\{[^]{0,2000}?\brole\b["'`]?\s*[:=]\s*['"`](system|user|assistant)['"`][^]{0,2000}?\bcontent\b/i;
 const AI_MODEL = /\bmodel\b["'`]?\s*[:=]\s*['"`](gpt-|claude-|gemini|mistral|llama|text-embedding|text-davinci|chat-bison|o[134]-)/i;
 // A network/import call that is NOT the approved same-origin /api proxy. Used to tell a
 // genuine (host-obfuscated) direct AI call from a payload that merely rides the proxy.
 const NON_PROXY_AI_CALL = /(\bfetch\s*\(|\baxios\b|XMLHttpRequest|new\s+WebSocket|\bimport\s*\()/i;
 const PROXY_DEST = /['"`]\/api\//;
+// A vendor AI host hidden via base64 (atob('…') / Buffer.from('…','base64')) — decode the
+// literal and test the plaintext against VENDOR_HOST, so a string-obfuscated direct call to
+// api.openai.com (etc.) can't evade §5.5 just because the host isn't spelled out in source.
+const B64_LITERAL = /(?:atob|Buffer\.from)\s*\(\s*['"`]([A-Za-z0-9+/=]{8,})['"`]/g;
+function decodeB64(s) {
+  try { return typeof atob === 'function' ? atob(s) : (typeof Buffer !== 'undefined' ? Buffer.from(s, 'base64').toString('latin1') : ''); }
+  catch { return ''; }
+}
+function hasObfuscatedVendorHost(clean) {
+  B64_LITERAL.lastIndex = 0;
+  let m;
+  while ((m = B64_LITERAL.exec(clean)) !== null) {
+    if (VENDOR_HOST.test(decodeB64(m[1]))) return true;
+  }
+  return false;
+}
 // A real client deliverable means an actual document-generation LIBRARY produced
 // an artifact — not just a function NAMED generateReport / exportToPdf (reliance
 // is un-inferable; a name must not auto-escalate to Approve).
@@ -123,16 +171,17 @@ const MUTATING_EXTERNAL = /(requests\.(post|put|patch|delete)\s*\(|axios\.(post|
 // path — because the approved AI proxy only ever uses POST. This catches the
 // "it updated a system" case the 6/25 meeting named as the real Lane-2 gate.
 const METHOD_WRITE = /method\s*:\s*['"`](put|patch|delete)['"`]/i;
-// Real source-of-truth writes: SQL/ORM/driver/BaaS evidence. Deliberately does
-// NOT match a bare `.create(`/`.save(` — those collide with AI SDKs
-// (messages.create) and generic builders; ORM writes are caught via the driver
-// import or a specific mutation method instead.
-// Note the `(?!:)` on the driver-name alternation: a driver word in a `scheme:`
-// DSN position (e.g. PDO's "mysql:host=…") is a read/write-agnostic CONNECTION,
-// not a mutation, so it must not read as a write (a `mysql://` URL is still caught
-// by the explicit `://` token, and an imported driver like `mysql2`/`psycopg2`
-// still matches because it isn't followed by a colon).
-const DB_ORM_WRITE = /(insert\s+into|update\s+\w+\s+set|delete\s+from|upsert|merge\s+into|create\s+table|alter\s+table|prisma\.[a-z]+\.(create|update|upsert|delete)|\.(insertone|insertmany|updateone|updatemany|deleteone|deletemany|bulkcreate|findoneandupdate)\s*\(|createpool\s*\(|createconnection\s*\(|database_url|(postgres|postgresql|mysql|mongodb):\/\/|\b(pg|mysql2?|sqlite3|mongodb|mongoose|psycopg2|sqlalchemy|knex|sequelize|@prisma\/client)\b(?!:)(?!\.Databases?\s*\())/i;
+// Real source-of-truth WRITES: SQL/ORM mutation or BaaS evidence. Deliberately does
+// NOT match a bare `.create(`/`.save(` — those collide with AI SDKs (messages.create)
+// and generic builders — and (since the QA pass) NO LONGER matches a bare driver-name
+// IMPORT: importing `pg`/`mongoose`/`sqlalchemy` and only reading from it is not a write,
+// so it must not auto-escalate to Approve. A bare driver import is instead a Lane-2 "live
+// data connection" hint (DB_DRIVER_IMPORT, below). Only an actual mutation lands here.
+const DB_ORM_WRITE = /(insert\s+into|update\s+\w+\s+set|delete\s+from|upsert|merge\s+into|create\s+table|alter\s+table|prisma\.[a-z]+\.(create|update|upsert|delete)|\.(insertone|insertmany|updateone|updatemany|deleteone|deletemany|bulkcreate|findoneandupdate)\s*\(|createpool\s*\(|createconnection\s*\(|database_url|(postgres|postgresql|mysql|mongodb):\/\/)/i;
+// A database driver/ORM that is merely IMPORTED/connected (no mutation) is a live external
+// data connection per §6 -> Lane 2, NOT an authoritative write (-> Approve). The `(?!:)`
+// keeps a `scheme:` DSN position (PDO's "mysql:host=…") from reading as an import.
+const DB_DRIVER_IMPORT = /\b(pg|mysql2?|sqlite3|better-sqlite3|mongodb|mongoose|psycopg2?|sqlalchemy|knex|sequelize|typeorm|cx_oracle|@prisma\/client)\b(?!:)(?!\.Databases?\s*\()/i;
 // A genuine backend runtime — framework, listener, serverless dir, or container —
 // not merely a client file that happens to be named app.js / main.js / server.js.
 const BACKEND_STRONG = /(import\s+express|require\(['"]express['"]\)|"express"\s*:|\bfastify\b|@nestjs\/|\bkoa\b|from\s+flask\s+import|flask\(__name__\)|from\s+fastapi\s+import|fastapi\s*\(|app\.listen\s*\(|http\.createserver|createserver\s*\(|app\.(get|post|put|delete)\s*\()/i;
@@ -225,7 +274,9 @@ export function extractFacts(corpus) {
   const scan = scanCorpus(corpus);
   const S = scan.signals;
   // Reuse the comment-stripped text the scanner already produced — no second strip pass.
-  const cleanFiles = scan.files.map((p) => ({ path: p.path, clean: p.stripped }));
+  // Carry each file's role so detectors can be runtime-scoped (an AI payload / app.get() /
+  // INSERT in a README or *.test.js must not set a runtime fact). See cleanFilesCode below.
+  const cleanFiles = scan.files.map((p) => ({ path: p.path, role: p.role, clean: p.stripped }));
   const grep = (re) => cleanFiles.some((f) => re.test(f.clean));
   // grep ONLY the synthetic spreadsheet artifacts (VBA / formulas / connections / queries).
   // The VBA/PQ/connection detectors run through this so they can NEVER affect the existing
@@ -274,7 +325,10 @@ export function extractFacts(corpus) {
   const firesAt = (id, pred) => !!(entry(id) && entry(id).evidence.some(pred));
 
   // ---- Code-certain technical facts ---------------------------------------
-  const directHost = anyEvidenceMatches(entry('runtime-ai-direct-vendor-host'), VENDOR_HOST);
+  // A vendor host counts only from code that ships (runtimeEvidence) — a README documenting
+  // "this calls api.openai.com" must not set a direct-AI fact; judge the code, not the prose.
+  const dvhEntry = entry('runtime-ai-direct-vendor-host');
+  const directHost = !!(dvhEntry && dvhEntry.runtimeEvidence.some((e) => VENDOR_HOST.test(e.text)));
   // An AI SDK counts as a runtime call only when actually imported in source —
   // a bare listing in package.json (even outside devDependencies) doesn't —
   // but a "spec/test" module that runtime code imports does ship.
@@ -284,16 +338,35 @@ export function extractFacts(corpus) {
   // An LLM payload (model + chat messages) that is NOT going to the approved
   // same-origin proxy is a direct AI call, however the host/SDK were hidden.
   const proxyPresent = !!(entry('approved-enterprise-proxy') && entry('approved-enterprise-proxy').fired);
-  // The proxy only licenses an AI call co-located with it. A separate, host-obfuscated
-  // call that makes its own non-/api network/import request is still direct, so a proxy
-  // elsewhere in the corpus must not cloak it (the §5.5 evasion the old global veto missed).
-  const directAiDest = cleanFiles.some((f) =>
-    (AI_PAYLOAD.test(f.clean) || AI_MODEL.test(f.clean)) && NON_PROXY_AI_CALL.test(f.clean) && !PROXY_DEST.test(f.clean));
-  const aiPayload = (grep(AI_PAYLOAD) || grep(AI_MODEL)) && (!proxyPresent || directAiDest);
+  // Only judge AI/write/network facts in code that actually ships: a payload, INSERT, or vendor
+  // host in a README or in a *.test.js (that runtime code never imports) is not a runtime fact.
+  // Keep the imported-test escape (a "spec" module that runtime code actually imports ships).
+  const cleanFilesCode = cleanFiles.filter((f) => f.role !== 'doc' && (f.role !== 'test' || isImportedTest(f.path)));
+  const grepCode = (re) => cleanFilesCode.some((f) => re.test(f.clean));
+  // An LLM chat payload (model + messages) anywhere in shipping code. The `content` pre-test
+  // keeps the bounded AI_PAYLOAD off any file that can't match it (and off the ReDoS path).
+  const anyPayload = cleanFilesCode.some((f) => AI_MODEL.test(f.clean) || (/\bcontent\b/.test(f.clean) && AI_PAYLOAD.test(f.clean)));
+  // Direct AI destination, two ways:
+  //  (a) per-file: a payload co-located with its own non-/api network/import call (the original).
+  //  (b) cross-file: the three ingredients of a direct call present ANYWHERE in shipping code —
+  //      a payload, a non-/api network/import call, AND a vendor host SPELLED OUT or base64-
+  //      obfuscated — even when split across files with a benign /api/chat proxy elsewhere.
+  //  (b) closes the §5.5 evasion the per-file-only test missed. The vendor-host requirement keeps
+  //  it from over-firing on ordinary code-splitting import()/relative fetch (those carry no host).
+  const perFileDirect = cleanFilesCode.some((f) =>
+    (AI_MODEL.test(f.clean) || (/\bcontent\b/.test(f.clean) && AI_PAYLOAD.test(f.clean)))
+    && NON_PROXY_AI_CALL.test(f.clean) && !PROXY_DEST.test(f.clean));
+  // A SPELLED-OUT vendor host in shipping code already sets directHost (-> directAI) on its own,
+  // so the cross-file path only needs to add the OBFUSCATED (base64) case: a payload + a non-/api
+  // call + a base64-decoded vendor host, anywhere in shipping code.
+  const anyNonProxyCall = cleanFilesCode.some((f) => NON_PROXY_AI_CALL.test(f.clean) && !PROXY_DEST.test(f.clean));
+  const crossFileVendor = anyPayload && anyNonProxyCall && cleanFilesCode.some((f) => hasObfuscatedVendorHost(f.clean));
+  const directAiDest = perFileDirect || crossFileVendor;
+  const aiPayload = anyPayload && (!proxyPresent || directAiDest);
   const directAI = directHost || sdkImport || clientKey || aiPayload;
   const proxyAI = proxyPresent && !directAI;
   const localML = fired('logic-probabilistic-ml-inference');
-  const backendEv = entry('backend-server-present')?.evidence || [];
+  const backendEv = entry('backend-server-present')?.runtimeEvidence || [];
   // Excel-4.0 (XLM) macro-sheet OS/DLL execution — EXEC/CALL/REGISTER/FOPEN. Path-scoped to
   // .xlm so it can't collide with Python exec(/C fopen(/JS .call( in the code corpus.
   const excel4Exec = cleanFiles.some((f) => /\.xlm$/i.test(f.path) && /\b(EXEC|CALL|REGISTER|FOPEN|FWRITE|FWRITELN)\s*\(/i.test(f.clean));
@@ -308,11 +381,15 @@ export function extractFacts(corpus) {
   // grep the precise write regex over the full comment-stripped corpus, NOT the signal's
   // 6-slot-capped evidence — broad benign matches (.save()/.create()) in earlier files
   // could otherwise crowd out a genuine INSERT/prisma write in a later file (false Lane 1).
-  const dbOrmWrite = grep(DB_ORM_WRITE);
+  // All write detectors are role-scoped (grepCode / cleanFilesCode): an INSERT/UPDATE/PUT in a
+  // README or a non-imported *.test.js demonstrates, but does not ship, a write.
+  const dbOrmWrite = grepCode(DB_ORM_WRITE);
   const dbWrite = dbOrmWrite || fired('backend-as-a-service-write')
-    || grep(MUTATING_EXTERNAL) || grep(METHOD_WRITE) || grep(MUTATING_FETCH_EXTERNAL)
-    || grep(RELATIVE_POST_WRITE) || grep(XHR_MUTATE_EXTERNAL) || grep(SHARED_PATH_WRITE)
-    || grep(ORM_CHAIN_WRITE) || grep(GO_WRITE) || grep(EXTRA_ORM_WRITE) || grepSheet(STORED_PROC_EXEC);
+    || grepCode(MUTATING_EXTERNAL)
+    || cleanFilesCode.some((f) => METHOD_WRITE.test(f.clean))      // PUT/PATCH/DELETE = an unambiguous record write
+    || cleanFilesCode.some((f) => hasFetchPostWrite(f.clean))      // external/relative POST to a write-y path (linear — replaces the ReDoS regexes)
+    || grepCode(XHR_MUTATE_EXTERNAL) || grepCode(SHARED_PATH_WRITE)
+    || grepCode(ORM_CHAIN_WRITE) || grepCode(GO_WRITE) || grepCode(EXTRA_ORM_WRITE) || grepSheet(STORED_PROC_EXEC);
   const cdnScript = fired('third-party-cdn-script') || fired('third-party-analytics-telemetry');
   // outbound = the global ruleset signal (fetch/axios/XHR/WebSocket to external hosts) PLUS
   // spreadsheet-scoped web idioms (VBA XMLHTTP/WinHTTP, PQ Web.Contents/SharePoint, =WEBSERVICE,
@@ -323,7 +400,8 @@ export function extractFacts(corpus) {
     || grepSheet(/CreateObject\s*\(\s*["'](Outlook\.Application|CDO\.Message|Redemption\.\w+)["']|\.CreateItem\s*\(\s*(0|olMailItem)\b/i);
   // A live external data feed (DB/ODBC/OLEDB/Power-Query/workbook connection) is the §6
   // "live data connection / integration" Lane-2 trigger — distinct from a server runtime.
-  const liveDataConnection = grepSheet(LIVE_DATA_CONN_CODE) || grepConn(LIVE_DATA_CONN_STRING);
+  const liveDataConnection = grepSheet(LIVE_DATA_CONN_CODE) || grepConn(LIVE_DATA_CONN_STRING)
+    || cleanFilesCode.some((f) => DB_DRIVER_IMPORT.test(f.clean));  // a DB driver imported but not mutating = §6 connection
   const persistence = fired('client-persistence-sensitive') || grepSheet(VBA_FILE_WRITE);
   // grep over full corpus, not capped evidence — benign SSO mentions (msal/oidc/saml)
   // must not crowd out an explicit allowAnonymous/public-auth flag in a later file.

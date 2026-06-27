@@ -69,10 +69,10 @@
         <div class="opts-menu" id="opts-menu" role="menu" hidden>
           <div class="opts-group" role="group" aria-label="Appearance">
             <span class="opts-label">Appearance</span>
-            <div class="seg theme-seg" id="theme-seg">
-              <button role="menuitemradio" data-theme="auto" class="on">Auto</button>
-              <button role="menuitemradio" data-theme="light">Light</button>
-              <button role="menuitemradio" data-theme="dark">Dark</button>
+            <div class="seg theme-seg" id="theme-seg" role="radiogroup" aria-label="Theme">
+              <button type="button" role="radio" data-theme="auto" class="on" aria-checked="true">Auto</button>
+              <button type="button" role="radio" data-theme="light" aria-checked="false">Light</button>
+              <button type="button" role="radio" data-theme="dark" aria-checked="false">Dark</button>
             </div>
           </div>
         </div>
@@ -82,6 +82,7 @@
 
     <!-- ============ Region C · Main canvas ============ -->
     <main class="main" id="work" role="main" tabindex="-1">
+      <h1 class="sr-only">Lane — POC Validator</h1>
       <div class="canvas" id="card" data-state="input">
         <div class="measure">
 

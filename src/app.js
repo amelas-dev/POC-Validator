@@ -8,6 +8,7 @@ import {
 } from './engine/sources.js';
 import { loadFromSpreadsheet, isSpreadsheet } from './engine/spreadsheet.js';
 import { runAdvisor, checkAvailable, DEFAULT_MODEL } from './llm/advisor.js';
+import { wouldDeEscalate } from './llm/clamp.js';
 
 const $ = (s) => document.querySelector(s);
 const card = $('#card');       // the work canvas; data-state drives the view
@@ -48,8 +49,6 @@ let aiAbort = null;       // AbortController for the in-flight read
 let aiRunId = 0;          // guards against a stale read resolving over a newer run
 let lastView = null;      // {r, baseline, aiApplied, aiHeld} — what renderResult resolved
 
-const LANE_RANK = { lane1: 0, lane2: 1, approve: 2 };
-
 // The verdict the engine reaches from ONLY code-certain facts + the user's own
 // overrides — no AI. This is the safety FLOOR: the code is untrusted, the local
 // model is prompt-injectable, so AI may add caution but must never silently make
@@ -67,7 +66,7 @@ function computeView() {
     return { r: baseline, baseline, aiApplied: false, aiHeld: false };
   }
   const withAI = resolve(cachedFacts, { ...aiOverrides, ...overrides });
-  if (LANE_RANK[withAI.verdict.key] < LANE_RANK[baseline.verdict.key]) {
+  if (wouldDeEscalate(baseline.verdict.key, withAI.verdict.key)) {
     return { r: baseline, baseline, aiApplied: false, aiHeld: true };   // refuse silent downgrade
   }
   return { r: withAI, baseline, aiApplied: true, aiHeld: false };
@@ -374,11 +373,27 @@ function renderResult() {
     ? `<span class="t-conf t-conf-${conf.level}" title="${esc(conf.reasons.join(' '))}">${conf.level} confidence</span><span class="t-sep">·</span>` : '';
   const seeFull = `<button class="trust" id="trust-line" aria-label="See the full check">${confNote}<span class="t-link">see the full check</span></button>`;
 
+  // FIX-25 — when an automated read judged the tool could be LIGHTER than the
+  // code-certain floor, we HOLD it (never auto-apply) and surface it here as a
+  // single, plainly-worded, user-confirmable suggestion. The lighter read takes
+  // effect only on click — the same manual-confirm path the assumption toggles use.
+  let aiHeldBlock = '';
+  if (view.aiHeld) {
+    const lighter = resolve(cachedFacts, { ...aiOverrides, ...overrides });
+    const lighterOutcome = OUTCOME[lighter.verdict.key];
+    const lighterLabel = FOOT_VERDICT[lighter.verdict.key] || (VERDICT[lighterOutcome] && VERDICT[lighterOutcome].headline) || 'a lighter read';
+    aiHeldBlock = `
+    <div class="ai-held" id="ai-held">
+      <div>An automated read of the code judged this could be lighter — <b>${esc(lighterLabel)}</b> — rather than <b>${esc(FOOT_VERDICT[r.verdict.key] || v.headline)}</b>. We kept the cautious read; you can apply the lighter one if it’s right.</div>
+      <button class="ai-apply" id="ai-apply" type="button">Apply the lighter read</button>
+    </div>`;
+  }
+
   $('#result').dataset.outcome = outcome;
   $('#result').innerHTML = `
     <div class="hero">
       <div class="orb" aria-hidden="true"></div>
-      <div><div class="headline">${esc(v.headline)}</div></div>
+      <div><h2 class="headline" id="verdict">${esc(v.headline)}</h2></div>
     </div>
     <div class="story">${esc(v.story)}</div>
     <div class="caption"><span class="slug">${esc(slug)}</span> · looks like ${esc(pat)}</div>
@@ -392,7 +407,8 @@ function renderResult() {
       <button class="ghost walk" id="walk"><span class="play">${ICONS.play}</span> Walk me through it</button>
       <div class="spacer"></div>
       <button class="cta" id="cta">${esc(v.cta)}</button>
-    </div>`;
+    </div>
+    ${aiHeldBlock}`;
 
   announce(`${v.headline} ${v.story}`);
   updateFooter(r);
@@ -402,6 +418,11 @@ function renderResult() {
   $('#cta').addEventListener('click', () => copyHandoff(r, v));
   $('#walk').addEventListener('click', () => startWalkthrough(r));
   const lb = $('#lighten-btn'); if (lb) lb.addEventListener('click', openLighten);
+  // FIX-25 — the held lighter read only applies on this explicit click; merging
+  // aiOverrides into the user's own overrides is the same manual-confirm seam the
+  // assumption toggles use (setOverride), so the clamp now sees a human choice.
+  const ah = $('#ai-apply');
+  if (ah) ah.addEventListener('click', () => { Object.assign(overrides, aiOverrides); renderResult(); });
   $('#result').querySelectorAll('.show-where').forEach((b) => b.addEventListener('click', () => {
     const tile = b.closest('.tile');
     const open = tile.classList.contains('open');
@@ -529,7 +550,10 @@ function startWalkthrough(r) {
   let idx = 0;
   let voice = false;                          // default off — TTS only when asked (no surprise audio)
   const trigger = document.activeElement;
-  const washed = document.querySelectorAll('.rail, .toolhead, .dock, .foot');
+  // Inert every region a Tab could reach behind the modal. The overlay is appended
+  // to #work as a sibling of #card, so inerting #card (the verdict content) does not
+  // inert the overlay itself. close() iterates this same set, so it stays symmetric.
+  const washed = document.querySelectorAll('.rail, .toolhead, .dock, .foot, #card, .sidebar, .bottompanel');
   const ov = document.createElement('div');
   ov.className = 'walk-overlay';
   ov.dataset.outcome = OUTCOME[r.verdict.key];
@@ -603,12 +627,22 @@ const QLABEL = { dataScope: 'The data is', reliance: 'Relied on by', writeAuthor
 // narrow screens (≤1100px) CSS turns it into an overlay and we move focus in.
 let drawerReturnFocus = null;
 const isNarrow = () => window.matchMedia('(max-width: 1100px)').matches;
+// Every region behind the dock when it falls back to a narrow-screen overlay —
+// the dock itself is excluded so it stays interactive. open/closeDrawer apply and
+// remove inert over the SAME set so focus can't escape (and isn't stranded).
+const dockBehind = () => document.querySelectorAll('.rail, .toolhead, .foot, #card, .sidebar, .bottompanel');
 function openDrawer() {
   if (shell.dataset.dock !== 'open') { renderDrawer(); drawerReturnFocus = document.activeElement; }
   shell.dataset.dock = 'open';
   syncPanelBtn('dock', true); store.set('panel.dock', true);
   $('#dock-toggle')?.setAttribute('aria-expanded', 'true');
-  if (isNarrow()) $('#drawer-close').focus();
+  if (isNarrow()) {
+    // narrow: the dock is a fixed scrim overlay — make it a real modal and trap focus
+    const dock = $('#dock');
+    if (dock) { dock.setAttribute('role', 'dialog'); dock.setAttribute('aria-modal', 'true'); }
+    dockBehind().forEach((el) => el.setAttribute('inert', ''));
+    $('#drawer-close').focus();
+  }
 }
 function openLighten() {
   openDrawer();
@@ -622,6 +656,11 @@ function closeDrawer() {
   shell.dataset.dock = 'closed';
   syncPanelBtn('dock', false); store.set('panel.dock', false);
   $('#dock-toggle')?.setAttribute('aria-expanded', 'false');
+  // tear down the narrow-screen modal semantics + inert, regardless of current width
+  // (the viewport may have changed since open) so nothing is left inert or trapped
+  const dock = $('#dock');
+  if (dock) { dock.removeAttribute('role'); dock.removeAttribute('aria-modal'); }
+  dockBehind().forEach((el) => el.removeAttribute('inert'));
   if (drawerReturnFocus && drawerReturnFocus.focus) drawerReturnFocus.focus();
 }
 // scrim sits behind whichever overlay is open on narrow screens — close them
@@ -713,8 +752,8 @@ function renderDrawer() {
 // selected. Presented as the app's own read — no model attribution, no badges.
 // Changing a value is the user's call and re-resolves the verdict instantly.
 function assumeHTML(a) {
-  const opts = a.options.map((o) => `<button data-kind="${esc(a.kind)}" data-val="${esc(o.value)}" class="${o.value === a.value ? 'on' : ''}">${esc(o.label)}</button>`).join('');
-  return `<div class="assume"><span class="q">${esc(QLABEL[a.kind] || 'Assumed')}</span><span class="seg">${opts}</span></div>`;
+  const opts = a.options.map((o) => `<button type="button" role="radio" aria-checked="${o.value === a.value ? 'true' : 'false'}" data-kind="${esc(a.kind)}" data-val="${esc(o.value)}" class="${o.value === a.value ? 'on' : ''}">${esc(o.label)}</button>`).join('');
+  return `<div class="assume"><span class="q">${esc(QLABEL[a.kind] || 'Assumed')}</span><span class="seg" role="radiogroup" aria-label="${esc(QLABEL[a.kind] || 'Assumption')}">${opts}</span></div>`;
 }
 
 // ============================================================================
@@ -776,7 +815,11 @@ function applyTheme(mode) {
   else document.documentElement.setAttribute('data-theme', mode);
   store.set('theme', mode);
   // every theme segment on the page (header quick-menu + settings page) stays in sync
-  document.querySelectorAll('.theme-seg button').forEach((b) => b.classList.toggle('on', b.dataset.theme === mode));
+  document.querySelectorAll('.theme-seg button').forEach((b) => {
+    const on = b.dataset.theme === mode;
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-checked', String(on));
+  });
 }
 
 // ============================================================================
@@ -894,10 +937,10 @@ function renderSetAppearance() {
             <div class="set-rt">Theme</div>
             <div class="set-rd">Follow your system, or lock to light or dark.</div>
           </div>
-          <div class="seg theme-seg">
-            <button type="button" data-theme="auto">Auto</button>
-            <button type="button" data-theme="light">Light</button>
-            <button type="button" data-theme="dark">Dark</button>
+          <div class="seg theme-seg" role="radiogroup" aria-label="Theme">
+            <button type="button" role="radio" data-theme="auto">Auto</button>
+            <button type="button" role="radio" data-theme="light">Light</button>
+            <button type="button" role="radio" data-theme="dark">Dark</button>
           </div>
         </div>
       </div>

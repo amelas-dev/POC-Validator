@@ -17,7 +17,13 @@ const COMPILED = SIGNALS.map((signal) => ({
   signal,
   regexes: signal.patterns.map((p) => {
     try {
-      return new RegExp(p, 'gim');
+      const re = new RegExp(p, 'gim');
+      // Only path-ORIENTED patterns (those carrying a path separator or a start/end anchor —
+      // e.g. `(^|/)Dockerfile$`, `functions/.*\.(js|ts)$`) are meant to match a filename. A
+      // pure content token (`INSERT\s+INTO`, `api\.openai\.com`) tested against the path only
+      // ever produces noise — and, in a runtime file, a spurious runtime evidence row.
+      re._pathOriented = /[/^$]/.test(p);
+      return re;
     } catch {
       // A malformed pattern should never break the whole scan.
       return null;
@@ -36,6 +42,7 @@ const RUNTIME_SCOPED = new Set([
   'backend-server-present',
   'third-party-cdn-script',
   'third-party-analytics-telemetry',
+  'outbound-network-call-nonallowlisted',
 ]);
 
 function fileRole(path) {
@@ -81,14 +88,10 @@ function commentStyle(path) {
 // Return a copy of `text` with comments replaced by spaces (newlines preserved,
 // so offsets and line numbers stay identical). String literals are respected so
 // `//` inside "https://…" is never mistaken for a comment.
-export function stripComments(path, text) {
-  const { line, block } = commentStyle(path);
-  const e = extOf(path);
-  // VBA / Power Query / extracted-formula files use ONLY " for strings — ' is a comment
-  // (VBA) or sheet-quoting (formulas), never a string opener — and have no \ escape. For
-  // every other language the original "/'/` string behaviour (with \ escapes) is kept.
-  const dquoteOnly = ['vba', 'bas', 'cls', 'frm', 'm', 'pq', 'formulas', 'defnames', 'xllinks', 'xlm'].includes(e);
-  const vbaRem = ['vba', 'bas', 'cls', 'frm'].includes(e);  // the VBA `Rem` comment keyword
+// Core: blank comments in `text` under one comment style, preserving newlines (so offsets and
+// line numbers stay identical). String literals are respected so `//` inside "https://…" is
+// never mistaken for a comment.
+function stripWithStyle(text, line, block, dquoteOnly, vbaRem) {
   const out = text.split('');
   const n = text.length;
   const blank = (a, b) => { for (let k = a; k < b && k < n; k++) if (out[k] !== '\n') out[k] = ' '; };
@@ -103,7 +106,7 @@ export function stripComments(path, text) {
       const nl = text.indexOf('\n', i); const stop = nl < 0 ? n : nl; blank(i, stop); i = stop; continue;
     }
     for (const [op, cl] of block) {
-      if (text.startsWith(op, i)) { const e = text.indexOf(cl, i + op.length); const stop = e < 0 ? n : e + cl.length; blank(i, stop); i = stop; hit = true; break; }
+      if (text.startsWith(op, i)) { const ce = text.indexOf(cl, i + op.length); const stop = ce < 0 ? n : ce + cl.length; blank(i, stop); i = stop; hit = true; break; }
     }
     if (hit) continue;
     for (const tok of line) {
@@ -116,6 +119,46 @@ export function stripComments(path, text) {
     i++;
   }
   return out.join('');
+}
+
+// For HTML/Vue/Svelte: after blanking <!-- --> over the whole doc, blank JS comments inside each
+// <script> span and CSS comments inside each <style> span — so a commented-out vendor host or AI
+// call in INLINE <script> doesn't read as live code (it wouldn't in an external .js). Each span
+// is stripped with stripWithStyle (length-preserving), so splicing it back keeps every offset.
+function stripTagSpans(text, openRe, closeTag, line, block) {
+  const chars = text.split('');
+  const lower = text.toLowerCase();
+  openRe.lastIndex = 0;
+  let m;
+  while ((m = openRe.exec(text)) !== null) {
+    const innerStart = m.index + m[0].length;
+    if (m[0].length === 0) { openRe.lastIndex++; continue; }
+    const closeIdx = lower.indexOf(closeTag, innerStart);
+    const innerEnd = closeIdx < 0 ? text.length : closeIdx;
+    if (innerEnd <= innerStart) continue;
+    const stripped = stripWithStyle(text.slice(innerStart, innerEnd), line, block, false, false);
+    for (let k = 0; k < stripped.length; k++) chars[innerStart + k] = stripped[k];
+  }
+  return chars.join('');
+}
+
+export function stripComments(path, text) {
+  const e = extOf(path);
+  // HTML-family files carry executable <script> (JS) and <style> (CSS) whose own comment
+  // syntaxes the outer <!-- --> style misses. Blank the markup comments first, then each span.
+  if (['html', 'htm', 'vue', 'svelte'].includes(e)) {
+    let out = stripWithStyle(text, [], [['<!--', '-->']], false, false);
+    out = stripTagSpans(out, /<script\b[^>]*>/gi, '</script>', ['//'], [['/*', '*/']]);
+    out = stripTagSpans(out, /<style\b[^>]*>/gi, '</style>', [], [['/*', '*/']]);
+    return out;
+  }
+  const { line, block } = commentStyle(path);
+  // VBA / Power Query / extracted-formula files use ONLY " for strings — ' is a comment (VBA)
+  // or sheet-quoting (formulas), never a string opener — and have no \ escape. Every other
+  // language keeps the "/'/` string behaviour (with \ escapes).
+  const dquoteOnly = ['vba', 'bas', 'cls', 'frm', 'm', 'pq', 'formulas', 'defnames', 'xllinks', 'xlm'].includes(e);
+  const vbaRem = ['vba', 'bas', 'cls', 'frm'].includes(e);  // the VBA `Rem` comment keyword
+  return stripWithStyle(text, line, block, dquoteOnly, vbaRem);
 }
 
 // Map a match index -> 1-based line number in O(log n). The line-start table is built
@@ -192,8 +235,9 @@ export function scanCorpus(corpus) {
         re.lastIndex = 0;
         let m;
         let perPattern = 0;
-        // Test the path itself (for path-oriented patterns like (^|/)Dockerfile$).
-        if (re.test(path)) {
+        // Test the path itself ONLY for path-oriented patterns like (^|/)Dockerfile$ — a content
+        // token must not match a filename and fabricate a line-0 path evidence row.
+        if (re._pathOriented && re.test(path)) {
           evidence.push({ path, line: 0, text: path, role, runtime: role !== 'doc' && role !== 'test', via: 'path', patternIndex: ri });
         }
         re.lastIndex = 0;

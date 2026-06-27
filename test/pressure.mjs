@@ -24,8 +24,21 @@ const binary = (s) => (s && s.startsWith('Lane 1') ? 'Lane 1' : 'Lane 2');
 let ok = 0, miss = 0, ambig = 0;
 const misses = [], ambigs = [];
 
+// Setup integrity (exit 2): every case must carry non-empty text AND a matching verifier.
+// Without text a case silently analyzes empty -> false Lane-1 pass; without a verifier a real
+// engine miss can only ever read as 'ambig' (defensible), hiding a coverage gap.
+const setupErrors = [];
 for (const c of cases) {
-  const r = analyze({ source: 'upload', label: c.id, files: c.files.map((f) => ({ path: f.path, text: f.snippet })), meta: {}, notes: [] });
+  for (const f of c.files) {
+    const t = f.snippet ?? f.text;
+    if (typeof t !== 'string' || t.length === 0) setupErrors.push(`${c.id}: file ${f.path} has no snippet/text`);
+  }
+  if (!vById[c.id]) setupErrors.push(`${c.id}: no verifier (cannot be triaged as a miss)`);
+}
+if (setupErrors.length) { console.error(`${R}Pressure setup error:${X}\n  ${setupErrors.join('\n  ')}`); process.exit(2); }
+
+for (const c of cases) {
+  const r = analyze({ source: 'upload', label: c.id, files: c.files.map((f) => ({ path: f.path, text: f.snippet ?? f.text })), meta: {}, notes: [] });
   const eng = r.verdict.lane;
   const gen = c.expectedLane;
   const v = vById[c.id];
@@ -65,4 +78,6 @@ if (ambigs.length) {
   console.log(`\n${B}${Y}=== Ambiguous (judges split — for the record) ===${X}`);
   for (const a of ambigs) console.log(`  ${a.c.id}: engine ${a.eng} · gen ${a.gen} · verify ${a.ver}  ${D}— ${a.c.attack}${X}`);
 }
-process.exit(0);
+// A confirmed engine miss (generator + verifier agree, engine differs) fails the suite so a
+// regression can't slip through CI. Ambiguous cases (judges split) do not fail.
+process.exit(miss ? 1 : 0);

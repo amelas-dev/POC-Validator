@@ -123,6 +123,7 @@ async function llmProxy(req, res) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
+      redirect: 'error',
       signal: ac.signal,
     });
     const text = await r.text();
@@ -149,6 +150,7 @@ async function proxyToFallback(payload, res) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
+      redirect: 'error',
       signal: ac.signal,
     });
     const text = await r.text();
@@ -191,6 +193,22 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    // Denylist (mirrors .assetsignore): never serve source/config/secrets in dev.
+    // Reject any dotfile/dotdir segment, sensitive basenames, or top-level dirs.
+    const rel = filePath.slice(ROOT.length).replace(/^[\\/]+/, '');
+    const segments = rel.split(/[\\/]+/).filter(Boolean);
+    const base = segments[segments.length - 1] || '';
+    const DENY_BASENAMES = new Set([
+      'server.js', 'package.json', 'package-lock.json',
+      'wrangler.toml', 'worker.js', '.assetsignore',
+    ]);
+    const DENY_TOP_DIRS = new Set(['functions', 'test', 'node_modules']);
+    const hasDotSegment = segments.some((s) => s.startsWith('.'));
+    if (hasDotSegment || DENY_BASENAMES.has(base) || DENY_TOP_DIRS.has(segments[0])) {
+      res.writeHead(404, { 'Content-Type': 'text/plain' }).end('Not found');
+      return;
+    }
+
     const info = await stat(filePath).catch(() => null);
     if (!info || !info.isFile()) {
       res.writeHead(404, { 'Content-Type': 'text/plain' }).end('Not found');
@@ -208,6 +226,7 @@ const server = createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, () => {
-  console.log(`\n  Lane — POC Validator running at  http://localhost:${PORT}\n`);
+const HOST = process.env.HOST || '127.0.0.1';
+server.listen(PORT, HOST, () => {
+  console.log(`\n  Lane — POC Validator running at  http://localhost:${PORT}  (bound to ${HOST})\n`);
 });

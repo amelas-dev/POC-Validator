@@ -121,7 +121,7 @@ body { overflow: hidden; }   /* the shell owns the viewport; only .main scrolls 
 .side-head { display: flex; align-items: center; justify-content: space-between; height: var(--head-h); flex: none; padding: 0 16px; border-bottom: 1px solid var(--chrome-line); }
 .side-head h2 { font-family: var(--font-display); font-size: 11px; font-weight: 500; letter-spacing: 0.14em; text-transform: uppercase; color: var(--brown); margin: 0; }
 .side-body { flex: 1; overflow-y: auto; padding: 8px 10px 16px; }
-.side-empty { padding: 28px 14px; text-align: center; color: var(--soft); font-size: 12.5px; line-height: 1.55; }
+.side-empty { padding: 28px 14px; text-align: center; color: var(--muted); font-size: 12.5px; line-height: 1.55; }
 .side-empty svg { width: 22px; height: 22px; opacity: 0.5; margin-bottom: 8px; }
 .recent {
   width: 100%; text-align: left; display: flex; align-items: center; gap: 10px;
@@ -135,7 +135,7 @@ body { overflow: hidden; }   /* the shell owns the viewport; only .main scrolls 
 .recent[data-v="lane2"] .rdot { background: var(--developer); }
 .recent[data-v="approve"] .rdot { background: var(--signoff); }
 .recent .rslug { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.recent .rmeta { font-size: 11px; color: var(--soft); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.recent .rmeta { font-size: 11px; color: var(--muted); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .recent .rtx { min-width: 0; flex: 1; }
 .side-clear { display: block; margin: 10px auto 0; background: none; border: none; font-family: var(--font-ui); font-size: 11.5px; color: var(--soft); cursor: pointer; border-bottom: 1px solid var(--hairline); }
 .side-clear:hover { color: var(--ink); }
@@ -159,7 +159,7 @@ body { overflow: hidden; }   /* the shell owns the viewport; only .main scrolls 
 .lane-card .lh { display: flex; align-items: center; gap: 8px; font-family: var(--font-ui); font-size: 13px; font-weight: 600; color: var(--ink); }
 .lane-card .lh .ldot { width: 8px; height: 8px; border-radius: 50%; background: var(--lc); flex: none; }
 .lane-card .lp { font-size: 12px; color: var(--muted); line-height: 1.45; margin: 6px 0 0; }
-.lane-gates { flex: none; width: 220px; align-self: center; font-size: 11.5px; color: var(--soft); line-height: 1.5; }
+.lane-gates { flex: none; width: 220px; align-self: center; font-size: 11.5px; color: var(--muted); line-height: 1.5; }
 .lane-gates b { font-family: var(--font-display); font-size: 9.5px; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase; color: var(--brown); display: block; margin-bottom: 4px; }
 
 /* ---- panel-toggle glyphs in the tool header -------------------------- */
@@ -355,7 +355,7 @@ body { overflow: hidden; }   /* the shell owns the viewport; only .main scrolls 
   outline: none; background: var(--white);
 }
 .collapsible input:focus { border-color: var(--brand); }
-.collapsible .hint { font-size: 12px; color: var(--soft); margin: 8px 2px 0; font-family: var(--font-ui); }
+.collapsible .hint { font-size: 12px; color: var(--muted); margin: 8px 2px 0; font-family: var(--font-ui); }
 
 .error { margin-top: 16px; font-size: 13.5px; color: var(--error-ink); display: none; align-items: flex-start; gap: 8px; line-height: 1.5; }
 .error.show { display: flex; }
@@ -388,6 +388,7 @@ body { overflow: hidden; }   /* the shell owns the viewport; only .main scrolls 
 @keyframes orb-pulse { 0% { box-shadow: 0 0 0 9px var(--glow), 0 8px 22px -6px transparent; } 40% { box-shadow: 0 0 0 17px color-mix(in srgb, var(--c) 12%, transparent), 0 8px 22px -6px transparent; } 100% { box-shadow: 0 0 0 9px var(--glow), 0 8px 22px -6px transparent; } }
 
 .headline {
+  margin: 0;   /* h2.headline — strip the UA heading margins so layout is unchanged */
   font-family: var(--font-serif); font-weight: 700; letter-spacing: -0.028em; line-height: 1.03;
   font-size: clamp(30px, 3.8vw, 42px); color: var(--ink);
   opacity: 0; transform: translateY(8px); animation: rise 0.45s var(--ease) 0.16s forwards;
@@ -528,9 +529,11 @@ body { overflow: hidden; }   /* the shell owns the viewport; only .main scrolls 
 .chk .cl { font-family: var(--font-ui); font-size: 14px; font-weight: 600; display: block; padding: 0; white-space: normal; }
 .chk .cd { font-size: 13px; color: var(--muted); line-height: 1.45; margin-top: 3px; }
 .chk .state { font-family: var(--font-display); font-size: 9.5px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; padding: 4px 9px; border-radius: 999px; height: fit-content; white-space: nowrap; }
-.chk .state.ok { color: var(--ready); background: var(--ready-glow); }
-.chk .state.work { color: var(--developer); background: var(--developer-glow); }
-.chk .state.rev { color: var(--signoff); background: var(--signoff-glow); }
+/* Pill text is darkened from the bright triad accents so it clears WCAG AA (4.5:1)
+   against its same-hue glow background (the accents alone sat near 3:1). */
+.chk .state.ok { color: #1B7A4F; background: var(--ready-glow); }
+.chk .state.work { color: #3A5BA8; background: var(--developer-glow); }
+.chk .state.rev { color: #A04B27; background: var(--signoff-glow); }
 
 .assume { margin-top: 10px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .assume .q { font-size: 12px; color: var(--soft); }
@@ -731,6 +734,17 @@ button.ai-chip:active { transform: scale(0.99); }
   --error-ink: #FF6B5C;
   --shadow: 0 1px 2px rgba(0,0,0,0.5), 0 22px 56px -30px rgba(0,0,0,0.85);
 }
+/* On dark, the state-pill glow backgrounds are translucent over the dark dock
+   surface; lighten the pill text so it still clears WCAG AA (4.5:1) there. */
+:root[data-theme="dark"] .chk .state.ok { color: #4FD498; }
+:root[data-theme="dark"] .chk .state.work { color: #9CB8F0; }
+:root[data-theme="dark"] .chk .state.rev { color: #F0A57E; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .chk .state.ok { color: #4FD498; }
+  :root:not([data-theme="light"]) .chk .state.work { color: #9CB8F0; }
+  :root:not([data-theme="light"]) .chk .state.rev { color: #F0A57E; }
+}
+
 /* on dark, the accent surface is near-white, so its text/glyph goes dark; and the
    logo tile's accent-tinted halo would read as a white glow — neutralise it */
 :root[data-theme="dark"] .go, :root[data-theme="dark"] .cta, :root[data-theme="dark"] .brand { color: #1D1D1F; }

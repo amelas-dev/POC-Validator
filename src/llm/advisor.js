@@ -159,6 +159,12 @@ async function callModel(prompt, model, num_ctx, signal) {
 // on any failure so the app simply keeps its deterministic-only verdict.
 export async function runAdvisor(corpus, { model = DEFAULT_MODEL, signal } = {}) {
   const { code, repoDesc, manifest } = buildCodeDigest(corpus);
+  // No readable source at all (e.g. empty corpus, or every file unreadable even
+  // after the digest's fallback) — short-circuit before building the prompt or
+  // calling the model, so we never waste a model call on an empty {{CODE}}.
+  if (!code || code === '(no readable source files)') {
+    return { ok: false, reason: 'no readable code', model };
+  }
   // If we couldn't fit the whole project, tell the model so it doesn't assume the
   // omitted files are harmless (honest "partial view" per the digest manifest).
   const repoDescFull = manifest.partial

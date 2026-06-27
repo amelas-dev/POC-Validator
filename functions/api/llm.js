@@ -1,10 +1,11 @@
 // functions/api/llm.js — Cloudflare Pages Function: POST /api/llm
 //
-// HOSTED counterpart to server.js's local Ollama proxy. Runs Google's **Gemma 4**
-// on **Cloudflare Workers AI** (the `env.AI` binding) — no external API key, all on
-// one platform, and the SAME Gemma family the prompt in src/llm/advisor.js was tuned
-// against locally. The reply is reshaped to look EXACTLY like the Ollama envelope
-// advisor.js already expects, so NOTHING in the frontend changes:
+// HOSTED counterpart to server.js's local Ollama proxy. Runs on **Cloudflare Workers
+// AI** (the `env.AI` binding) — no external API key, all on one platform. The PRIMARY
+// serving model is a fast Llama/Mistral instruct model (see DEFAULT_MODELS), with
+// Google's **Gemma 4** kept only as a last-resort fallback. The reply is reshaped to
+// look EXACTLY like the Ollama envelope advisor.js already expects, so NOTHING in the
+// frontend changes:
 //
 //   request  (from advisor.js):  { model, prompt, format:"json", stream:false,
 //                                   options:{ temperature, seed, num_ctx } }
@@ -156,10 +157,11 @@ export async function onRequestPost(context) {
   let out = null, usedModel = null, lastErr = null;
   for (const m of candidates) {
     try {
+      let tid;
       out = await Promise.race([
         env.AI.run(m, aiInput),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('model timeout')), timeoutMs)),
-      ]);
+        new Promise((_, reject) => { tid = setTimeout(() => reject(new Error('model timeout')), timeoutMs); }),
+      ]).finally(() => clearTimeout(tid));
       usedModel = m;
       break;
     } catch (e) {

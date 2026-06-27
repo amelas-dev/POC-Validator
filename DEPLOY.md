@@ -1,9 +1,11 @@
-# Deploy free, with cloud AI (Gemma 4 on Cloudflare Workers AI)
+# Deploy free, with cloud AI (Cloudflare Workers AI)
 
 This hosts the app publicly **for $0, no credit card, no separate API key**, using the
 **Workers + Static Assets** model: a tiny Worker (`worker.js`) serves the static
-front-end and routes `/api/*` to the handlers in `functions/`, and Google's **Gemma 4**
-runs on **Cloudflare Workers AI** via the `AI` binding.
+front-end and routes `/api/*` to the handlers in `functions/`, and inference runs on
+**Cloudflare Workers AI** via the `AI` binding — a fast Llama/Mistral instruct model
+(see `DEFAULT_MODELS` in `functions/api/llm.js`), with Google's Gemma 4 as a
+last-resort fallback. The server picks the model; the client never does.
 
 > Deployed as a **Worker** (not classic Pages). Cloudflare's Git build runs
 > `npx wrangler deploy`, which is a Workers command — so the project must be a
@@ -18,7 +20,7 @@ private/offline dev. `worker.js` / `wrangler.toml` only power the public deploy.
 
 ```
 Browser ─▶ Worker (worker.js)
-           ├─ /api/llm, /api/llm/health ─▶ functions/ handlers ─env.AI.run()─▶ Gemma 4
+           ├─ /api/llm, /api/llm/health ─▶ functions/ handlers ─env.AI.run()─▶ Workers AI model
            └─ everything else            ─▶ env.ASSETS (static: index.html, src/, assets/)
 ```
 
@@ -41,7 +43,7 @@ Browser ─▶ Worker (worker.js)
    `wrangler dev`; production uses the binding configured on the Worker.)
 
 Then open the Worker's URL → Options → **AI assist** → run a check; you'll get a
-Gemma 4 read. Every `git push` to `main` auto-deploys from then on.
+Workers AI read. Every `git push` to `main` auto-deploys from then on.
 
 ### If you already have a *Pages* project named `pocai`
 A Worker config can't deploy into a Pages project. Create the **Worker** as above

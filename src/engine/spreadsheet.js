@@ -355,8 +355,9 @@ function base64ToBytes(b64) {
 // ===========================================================================
 export function csvToArtifacts(text, name) {
   const files = [];
-  const raw = String(text || '').slice(0, MAX_TEXT_BYTES);
-  files.push({ path: `data/${name}`, text: raw, bytes: raw.length, truncated: text.length > MAX_TEXT_BYTES });
+  const s = String(text || '');
+  const raw = s.slice(0, MAX_TEXT_BYTES);
+  files.push({ path: `data/${name}`, text: raw, bytes: raw.length, truncated: s.length > MAX_TEXT_BYTES });
   // Delimiter: trust the extension; otherwise count tabs vs commas OUTSIDE quoted fields
   // (so prose commas inside a quoted note don't masquerade as a comma-delimited file).
   const ext = (String(name).split('.').pop() || '').toLowerCase();
@@ -368,7 +369,7 @@ export function csvToArtifacts(text, name) {
   // classic CSV/DDE-injection vector. Parse as proper records (quote state carries across
   // physical newlines, so an embedded newline in a quoted field can't hide an injection).
   const inject = [];
-  for (const { row, col, value } of parseCsvRecords(raw, delim, 500)) {
+  for (const { row, col, value } of parseCsvRecords(raw, delim)) {
     const v = value.replace(/^\s+/, '');                       // trim leading WS only (quotes already consumed)
     if (/^[=+\-@]/.test(v) && /[A-Za-z(]/.test(v)) inject.push(`${cellRef(col, row)}: ${v.slice(0, 200)}`);
     if (inject.length >= 500) break;
@@ -381,7 +382,7 @@ export function csvToArtifacts(text, name) {
 }
 // Record-aware CSV/TSV parser: quote state carries across physical newlines (RFC-4180-ish).
 // Yields { row, col, value } for the first `maxCells` non-empty cells.
-function parseCsvRecords(text, delim, maxCells) {
+function parseCsvRecords(text, delim, maxCells = Infinity) {
   const out = []; let row = 0, col = 0, cur = '', q = false, started = false;
   const push = () => { if (cur !== '' || started) out.push({ row, col, value: cur }); cur = ''; col++; started = false; };
   for (let i = 0; i < text.length && out.length < maxCells; i++) {
@@ -436,7 +437,14 @@ export async function loadFromSpreadsheet(file, onProgress = () => {}, opts = {}
   // OOXML workbook (xlsx/xlsm/xlsb/xltx/xltm)
   onProgress('Unpacking workbook…');
   const ZipLib = getZipLib(opts);
-  const zip = await ZipLib.loadAsync(file);
+  let zip;
+  try { zip = await ZipLib.loadAsync(file); }
+  catch {
+    return normalize(
+      [{ path: 'data/summary.txt', text: '(This file could not be read as a workbook — it may be corrupt or truncated.)', bytes: 0, truncated: false }],
+      { source: 'spreadsheet', label: name, meta: { kind: ext }, notes: ['This workbook could not be opened (corrupt or truncated archive).'] },
+    );
+  }
   const entries = zip.files;
   const has = (p) => !!entries[p];
   const readStr = async (p) => (entries[p] ? entries[p].async('string') : '');

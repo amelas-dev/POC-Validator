@@ -35,12 +35,13 @@ leaves your machine** — see [Local AI assist](#local-ai-assist-optional) below
 ## Host it free (public, with cloud AI)
 
 To put this online for others with the AI assist working — **$0, no credit card, no
-API key** — deploy on **Cloudflare Pages** and run Google's **Gemma 4** model on
-**Cloudflare Workers AI** (the `AI` binding; free 10,000 neurons/day). Gemma is the
-same model family the prompt was tuned against locally. The function
-(`functions/api/llm.js`) speaks the same shape the app already expects, so the
-frontend is unchanged; `node server.js` + local Ollama still works for private/offline
-use. Full steps in **[DEPLOY.md](DEPLOY.md)**.
+API key** — deploy as a **Cloudflare Worker** (Workers + Static Assets) and run
+inference on **Cloudflare Workers AI** (the `AI` binding; free 10,000 neurons/day).
+The server picks the model — a fast Llama/Mistral instruct model is primary, with
+Gemma 4 as a last-resort fallback (see `DEFAULT_MODELS` in `functions/api/llm.js`).
+The function speaks the same shape the app already expects, so the frontend is
+unchanged; `node server.js` + local Ollama still works for private/offline use. Full
+steps in **[DEPLOY.md](DEPLOY.md)**.
 
 > Trade-off: the hosted path sends the code digest to Cloudflare Workers AI (not
 > on-device). The deterministic engine and the escalate-only safety clamp are
@@ -131,7 +132,7 @@ it would otherwise guess, and **you can override any of them**. Precedence is al
   model (default `gemma4:e4b`) through a same-origin proxy — the browser only ever
   talks to its own origin, and **nothing is uploaded**. In this local setup the cloud
   APIs are deliberately *not* used. *(For a **public** deploy where visitors don't run
-  Ollama, the [free hosted option](#host-it-free-public-with-cloud-ai) runs Gemma 4 on
+  Ollama, the [free hosted option](#host-it-free-public-with-cloud-ai) runs a model on
   Cloudflare Workers AI instead — a deliberate privacy trade made only in that mode, and
   the UI labels it honestly as "Cloud AI · the code digest is sent to the model".)*
 - **Opt-in and fail-safe.** Off by default. If Ollama isn't running (or the model

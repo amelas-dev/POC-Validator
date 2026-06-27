@@ -38,9 +38,9 @@ function rank(path) {
 // Build the digest string + a manifest of what was (and wasn't) included, so the
 // advisor can honestly tell the model "this is a partial view" when it is.
 export function buildCodeDigest(corpus, { charBudget = CHAR_BUDGET } = {}) {
-  const files = (corpus && corpus.files) || [];
+  const files = Array.isArray(corpus && corpus.files) ? corpus.files : [];
   const ranked = files
-    .map((f) => ({ f, score: rank(f.path), minified: isMinified(f.text || '') }))
+    .map((f) => ({ f, score: rank((f && f.path) || ''), minified: isMinified((f && f.text) || '') }))
     .sort((a, b) => b.score - a.score);
 
   const parts = [];
@@ -50,17 +50,35 @@ export function buildCodeDigest(corpus, { charBudget = CHAR_BUDGET } = {}) {
 
   for (const { f, minified } of ranked) {
     if (included.length >= MAX_FILES || used >= charBudget) { omitted++; continue; }
-    let body = String(f.text || '');
+    let body = String((f && f.text) || '');
     if (minified) { omitted++; continue; }               // unreadable bundle — skip
     let trimmed = false;
     if (body.length > PER_FILE_CAP) { body = body.slice(0, PER_FILE_CAP); trimmed = true; }
     const remaining = charBudget - used;
     if (body.length > remaining) { body = body.slice(0, remaining); trimmed = true; }
     if (!body.trim()) { omitted++; continue; }
-    const header = `\n----- FILE: ${f.path}${trimmed ? '  (truncated)' : ''} -----\n`;
+    const header = `\n----- FILE: ${(f && f.path) || ''}${trimmed ? '  (truncated)' : ''} -----\n`;
     parts.push(header + body);
     used += header.length + body.length;
-    included.push(f.path);
+    included.push((f && f.path) || '');
+  }
+
+  // Fallback: if every ranked file tripped the isMinified guard (common for a
+  // single-/few-file POC that happens to be one long line), the digest would
+  // collapse to '(no readable source files)' and leave the advisor blind. Rather
+  // than that, include the single top-ranked non-empty file, trimmed to the cap.
+  if (included.length === 0) {
+    for (const { f } of ranked) {
+      const text = String((f && f.text) || '');
+      if (!text.trim()) continue;
+      const path = (f && f.path) || '';
+      const body = text.slice(0, PER_FILE_CAP);
+      const header = `\n----- FILE: ${path}  (truncated) -----\n`;
+      parts.push(header + body);
+      used += header.length + body.length;
+      included.push(path);
+      break;
+    }
   }
 
   const meta = (corpus && corpus.meta) || {};

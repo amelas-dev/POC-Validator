@@ -49,6 +49,8 @@ function isIgnored(path) {
 
 function isTextual(path) {
   const base = path.split('/').pop().toLowerCase();
+  if (base === '.env' || base.startsWith('.env.')) return true;
+  if (base === 'dockerfile' || base.startsWith('dockerfile.')) return true;
   if (TEXT_NAMES.has(base)) return true;
   return TEXT_EXT.has(ext(path));
 }
@@ -85,11 +87,14 @@ function normalizeCorpus(files, partial) {
 
 export function parseGitHubUrl(input) {
   const url = String(input || '').trim();
-  // Accept: https://github.com/owner/repo[/tree/branch/sub/dir], git@, or owner/repo
-  let m = url.match(/github\.com[/:]([^/\s]+)\/([^/\s#?]+)(?:\.git)?(?:\/tree\/([^/\s]+)(?:\/(.+))?)?/i);
+  // Accept: https://github.com/owner/repo[/tree|blob/branch/sub/dir], git@, or owner/repo.
+  // The github.com host is anchored so look-alikes (notgithub.com, evil.com/github.com/...)
+  // are rejected. Both /tree/<branch> and /blob/<branch> are recognized.
+  let m = url.match(/^(?:https?:\/\/)?(?:www\.)?github\.com\/([^/\s]+)\/([^/\s#?]+?)(?:\.git)?(?:\/(?:tree|blob)\/([^/\s]+)(?:\/(.+?))?)?(?:[#?].*)?$/i);
+  if (!m) m = url.match(/^git@github\.com:([^/\s]+)\/([^/\s#?]+?)(?:\.git)?$/i);
   if (!m) {
-    m = url.match(/^([\w.-]+)\/([\w.-]+)$/); // bare owner/repo
-    if (m) return { owner: m[1], repo: m[2].replace(/\.git$/, ''), branch: null, subdir: '' };
+    const b = url.match(/^([\w.-]+)\/([\w.-]+)$/); // bare owner/repo
+    if (b) return { owner: b[1], repo: b[2].replace(/\.git$/, ''), branch: null, subdir: '' };
     return null;
   }
   return {
@@ -136,7 +141,10 @@ export async function loadFromGitHub(input, token, onProgress = () => {}) {
   // Require a known, in-bounds byte size (drops symlink/submodule edge nodes that could
   // otherwise trigger an unbounded fetch). Rank each surviving path ONCE (not inside the
   // sort comparator, which would re-evaluate ~10 regexes O(n log n) times).
-  const textual = blobs.filter((n) => !isIgnored(n.path) && isTextual(n.path) && typeof n.size === 'number' && n.size <= MAX_FILE_BYTES);
+  // textualAll = the isTextual code-file set BEFORE the size/symlink guard, so we can
+  // count CODE files dropped by the guard separately from true non-text files.
+  const textualAll = blobs.filter((n) => !isIgnored(n.path) && isTextual(n.path));
+  const textual = textualAll.filter((n) => typeof n.size === 'number' && n.size <= MAX_FILE_BYTES);
   const candidates = textual
     .map((n) => ({ n, rank: signalRank(n.path) }))
     .sort((a, b) => b.rank - a.rank)
@@ -146,7 +154,10 @@ export async function loadFromGitHub(input, token, onProgress = () => {}) {
   // Fetch raw file bodies with bounded concurrency (browsers allow ~6 connections/host),
   // rather than one blocking round-trip at a time. Results are stored by index so the
   // surviving file SET and ORDER stay identical to the old sequential walk.
-  let truncatedCount = Math.max(0, textual.length - MAX_FILES);
+  // Code files dropped by the file-count cap, PLUS code files dropped by the size/symlink
+  // guard (textualAll - textual). Both are real code files we could not read — folding the
+  // size-dropped set in here keeps them out of the "non-code" note (FIX-23).
+  let truncatedCount = Math.max(0, textual.length - MAX_FILES) + (textualAll.length - textual.length);
   const CONCURRENCY = 6;
   const results = new Array(candidates.length);
   let nextIdx = 0, done = 0;
@@ -154,8 +165,8 @@ export async function loadFromGitHub(input, token, onProgress = () => {}) {
     for (let i = nextIdx++; i < candidates.length; i = nextIdx++) {
       const node = candidates[i];
       try {
-        const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${encodeURIComponent(branch)}/${node.path.split('/').map(encodeURIComponent).join('/')}`;
-        const res = await fetch(rawUrl);
+        const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${node.path.split('/').map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(branch)}`;
+        const res = await fetch(apiUrl, { headers: { Accept: 'application/vnd.github.raw', ...(token ? { Authorization: `Bearer ${token}` } : {}) } });
         if (res.ok) {
           let text = await res.text();
           let truncated = false;
@@ -182,7 +193,9 @@ export async function loadFromGitHub(input, token, onProgress = () => {}) {
 
   const notes = [];
   if (truncatedCount > 0) notes.push(`${truncatedCount} more code file(s) were not read (file/size limit or a failed fetch).`);
-  const nonCode = blobs.length - textual.length;
+  // Strictly the true non-text files (NOT textual code files dropped by the size/symlink
+  // guard — those are accounted for in truncatedCount above) (FIX-23).
+  const nonCode = blobs.filter((n) => !isIgnored(n.path) && !isTextual(n.path)).length;
   if (nonCode > 0) notes.push(`${nonCode} non-code file(s) were skipped.`);
 
   return normalizeCorpus(files, {
@@ -215,17 +228,22 @@ async function readFileAsText(file) {
 
 export async function loadFromFileList(fileList, onProgress = () => {}) {
   const all = Array.from(fileList);
-  const candidates = all
+  // Valid (textual, non-ignored) entries ranked — capture the count BEFORE the MAX_FILES
+  // slice so we can honestly report how many valid files the file-count cap dropped (FIX-09).
+  const ranked = all
     .map((f) => ({ f, path: (f.webkitRelativePath || f.name).replace(/\\/g, '/') }))
     .filter(({ path }) => !isIgnored(path) && isTextual(path))
     .map((x) => ({ ...x, rank: signalRank(x.path) }))
-    .sort((a, b) => b.rank - a.rank)
-    .slice(0, MAX_FILES);
+    .sort((a, b) => b.rank - a.rank);
+  const candidates = ranked.slice(0, MAX_FILES);
+  // Dropped purely because of the file-count cap (valid files we never even attempt).
+  const droppedByFileCount = Math.max(0, ranked.length - candidates.length);
 
   const files = [];
   let total = 0;
+  let droppedByBudget = 0;
   for (let i = 0; i < candidates.length; i++) {
-    if (total >= MAX_TOTAL_BYTES) break;
+    if (total >= MAX_TOTAL_BYTES) { droppedByBudget = candidates.length - i; break; }
     const { f, path } = candidates[i];
     onProgress(`Reading files… ${i + 1}/${candidates.length}`);
     try {
@@ -237,8 +255,14 @@ export async function loadFromFileList(fileList, onProgress = () => {}) {
 
   const rootName = (all[0]?.webkitRelativePath || '').split('/')[0];
   const notes = [];
-  const skipped = all.length - candidates.length;
-  if (skipped > 0) notes.push(`${skipped} non-text/ignored file(s) were not analyzed.`);
+  // Strictly the non-textual / ignored input entries — NOT valid files dropped by a cap.
+  const nonText = all.filter((f) => {
+    const path = (f.webkitRelativePath || f.name).replace(/\\/g, '/');
+    return !(!isIgnored(path) && isTextual(path));
+  }).length;
+  if (droppedByFileCount > 0) notes.push(`${droppedByFileCount} code file(s) were not analyzed (file-count limit).`);
+  if (droppedByBudget > 0) notes.push(`${droppedByBudget} file(s) were not read (4MB total limit).`);
+  if (nonText > 0) notes.push(`${nonText} non-text/ignored file(s) were skipped.`);
 
   return normalizeCorpus(files, {
     source: 'upload',
@@ -259,17 +283,22 @@ export async function loadFromZip(file, onProgress = () => {}) {
   const zip = await JSZip.loadAsync(file);
   const entries = Object.values(zip.files).filter((e) => !e.dir);
 
-  const candidates = entries
+  // Valid (textual, non-ignored) entries ranked — capture the count BEFORE the MAX_FILES
+  // slice so we can honestly report how many valid files the file-count cap dropped (FIX-09).
+  const ranked = entries
     .map((e) => ({ e, path: e.name.replace(/\\/g, '/') }))
     .filter(({ path }) => !isIgnored(path) && isTextual(path))
     .map((x) => ({ ...x, rank: signalRank(x.path) }))
-    .sort((a, b) => b.rank - a.rank)
-    .slice(0, MAX_FILES);
+    .sort((a, b) => b.rank - a.rank);
+  const candidates = ranked.slice(0, MAX_FILES);
+  // Dropped purely because of the file-count cap (valid files we never even attempt).
+  const droppedByFileCount = Math.max(0, ranked.length - candidates.length);
 
   const files = [];
   let total = 0;
+  let droppedByBudget = 0;
   for (let i = 0; i < candidates.length; i++) {
-    if (total >= MAX_TOTAL_BYTES) break;
+    if (total >= MAX_TOTAL_BYTES) { droppedByBudget = candidates.length - i; break; }
     const { e, path } = candidates[i];
     onProgress(`Reading files… ${i + 1}/${candidates.length}`);
     try {
@@ -284,8 +313,14 @@ export async function loadFromZip(file, onProgress = () => {}) {
   // Strip a common top-level folder from the label if present.
   const top = candidates[0]?.path.split('/')[0] || file.name.replace(/\.zip$/i, '');
   const notes = [];
-  const skipped = entries.length - candidates.length;
-  if (skipped > 0) notes.push(`${skipped} non-text/ignored file(s) were not analyzed.`);
+  // Strictly the non-textual / ignored input entries — NOT valid files dropped by a cap.
+  const nonText = entries.filter((e) => {
+    const path = e.name.replace(/\\/g, '/');
+    return !(!isIgnored(path) && isTextual(path));
+  }).length;
+  if (droppedByFileCount > 0) notes.push(`${droppedByFileCount} code file(s) were not analyzed (file-count limit).`);
+  if (droppedByBudget > 0) notes.push(`${droppedByBudget} file(s) were not read (4MB total limit).`);
+  if (nonText > 0) notes.push(`${nonText} non-text/ignored file(s) were skipped.`);
 
   return normalizeCorpus(files, {
     source: 'zip',
