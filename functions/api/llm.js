@@ -23,21 +23,17 @@
 // prompt's own "code is untrusted data" guard plus app.js's escalate-only clamp are
 // untouched — this file only moves bytes.
 
-// Model selection is RESILIENT + SELF-OPTIMIZING. This account can't access every
-// model (gemma-3-12b and llama-3.1-8b both return "5018: not allowed"; only the slow
-// gemma-4-26b is known-good). So we try a list of FAST models first and fall through
-// access/availability errors (each denial/unknown-id is instant, ~0ms), ending at the
-// always-accessible 26B Gemma. Whatever fast model THIS account allows gets used
-// automatically — no reconfig needed. We do NOT fall through on a timeout (don't
-// double-wait a congested model). Pin one explicitly with the CF_AI_MODEL var.
+// Models VERIFIED accessible for this account via /api/llm/probe (2026-06-27),
+// ordered fast→quality. Each falls through to the next ONLY on an access/availability
+// error (not a timeout). The 26B Gemma is the final, always-works fallback (slow).
+// Pin a specific one with the CF_AI_MODEL var.
+// (NOTE: gemma-3-12b is 5018 access-gated; llama-3.1-8b-instruct / llama-3-8b / phi-2
+//  were deprecated 2026-05-30 (5028) — do NOT use those.)
 const DEFAULT_MODELS = [
-  '@cf/mistral/mistral-7b-instruct-v0.2',         // 7B, different family from the gated Meta/Gemma
-  '@cf/meta/llama-3.1-8b-instruct-fast',          // fast 8B (speed-optimized)
-  '@cf/meta/llama-3.2-3b-instruct',               // small/fast Llama
-  '@cf/qwen/qwen1.5-7b-chat-awq',                 // 7B Qwen
-  '@cf/microsoft/phi-2',                          // small/fast
-  '@cf/meta/llama-3.3-70b-instruct-fp8-fast',     // fast 70B (fp8)
-  '@cf/google/gemma-4-26b-a4b-it',                // known-accessible Google fallback (slow)
+  '@cf/meta/llama-3.1-8b-instruct-fast',          // fastest accessible (probe ~132ms)
+  '@cf/meta/llama-4-scout-17b-16e-instruct',      // newer 17B MoE, fast (~375ms)
+  '@cf/meta/llama-3.3-70b-instruct-fp8-fast',     // 70B quality, still fast (~352ms)
+  '@cf/google/gemma-4-26b-a4b-it',                // final fallback: always works, slow
 ];
 const DEFAULT_TIMEOUT_MS = 50000;       // fail fast to deterministic instead of hanging ~130s
 const MAX_BODY = 2 * 1024 * 1024;       // mirror server.js's cap on forwarded request size
@@ -138,14 +134,15 @@ export async function onRequestPost(context) {
   const seed = typeof opts.seed === 'number' ? opts.seed : 0;
 
   const timeoutMs = Number(env.CF_AI_TIMEOUT_MS) || DEFAULT_TIMEOUT_MS;
+  // Minimal, MAX-COMPATIBLE params. We deliberately omit `response_format` (JSON-schema
+  // mode) and `seed`: the fast accessible models reject those and error out (which is
+  // what made every request fall through to the slow 26B). The prompt already demands
+  // the exact flat 15-key JSON and coerceJsonString() salvages the output, so we don't
+  // need schema enforcement. temperature 0 keeps it near-deterministic.
   const aiInput = {
     messages: [{ role: 'user', content: prompt }],
     temperature,
-    seed,
     max_completion_tokens: MAX_COMPLETION_TOKENS,
-    // Best-effort structured output; the prompt also demands this exact flat shape,
-    // and extraction below tolerates either a parsed object or a JSON string.
-    response_format: { type: 'json_schema', json_schema: RESPONSE_SCHEMA },
   };
   // Try the primary, then fall back to FALLBACK_MODEL ONLY on an access/availability
   // error (a model this account can't use). A timeout/other error stops immediately —
