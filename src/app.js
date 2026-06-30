@@ -124,6 +124,13 @@ const PATTERN = {
 
 // Small lane label for the verdict eyebrow (editorial caps via CSS).
 const LANE_EYEBROW = { ready: 'Lane 1 · the light path', developer: 'Lane 2 · developer build', signoff: 'Sign-off · committee review' };
+// The three governance lanes, shown as a row at the foot of the verdict; the current
+// outcome is highlighted. Copy mirrors the bottom-drawer reference.
+const LANES = [
+  { key: 'ready', name: 'Lane 1 · Light path', desc: 'Publish behind login after a quick safety check. The builder stays responsible.' },
+  { key: 'developer', name: 'Lane 2 · Developer', desc: 'A developer builds it out before it goes live — a normal next step, on isolated hosting.' },
+  { key: 'signoff', name: 'Approve · Sign-off', desc: 'A developer builds it and the AI Committee approves before launch — sensitive client or fund work.' },
+];
 const WOULDBE = { lane1: 'the light path', lane2: 'developer-built', approve: 'a sign-off' };
 const LANE_RANK = { lane1: 0, lane2: 1, approve: 2 };
 const ANNOT = { host: 'custom server', c53: 'record update', c55: 'outside AI call', c56: 'outside-the-company call', c57: 'local data save', c54: 'judgment call', c52: 'client/fund data', c51: 'reliance on others' };
@@ -610,36 +617,56 @@ function renderResult(fresh = false) {
   const el = $('#result');
   el.dataset.outcome = outcome;
   el.dataset.fresh = fresh ? '1' : '';   // entrance animations run only on the initial reveal
-  // Two zones that use the full width: the ANSWER (left — verdict, plain-language
-  // read, the command actions) and the EVIDENCE (right — the why, as a ledger, plus
-  // the levers the user can change). Differentiated treatments, no card wrapper.
+  // Verdict spread: NARRATIVE (the answer) beside WHAT DECIDED IT (the why), with
+  // the three GOVERNANCE LANES across the foot — the current one highlighted.
+  const nFilesN = (r.meta && r.meta.fileCount) || 0;
+  const metaLine = `<div class="vr-meta"><span class="vr-src">${esc(sourceLabel(r.meta.source))}</span><span class="vr-dot" aria-hidden="true">·</span>${nFilesN} file${nFilesN === 1 ? '' : 's'}<span class="vr-dot" aria-hidden="true">·</span>looks like ${esc(pat)}</div>`;
+  const lanesBlock = `
+    <div class="vr-lanes">
+      <div class="lanes-head">
+        <span class="lanes-title">Governance lanes</span>
+        <span class="lanes-note">What pushes it heavier: updating a system of record · a client deliverable relied on · unreviewed probabilistic output</span>
+      </div>
+      <div class="lanes-grid">
+        ${LANES.map((L) => `<div class="lane-tile${L.key === outcome ? ' current' : ''}" data-v="${L.key}">${L.key === outcome ? '<span class="lane-badge">Current</span>' : ''}<div class="lane-h"><span class="ldot" aria-hidden="true"></span>${esc(L.name)}</div><div class="lane-d">${esc(L.desc)}</div></div>`).join('')}
+      </div>
+    </div>`;
+  const arrow = '<svg class="cta-arw" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4"/></svg>';
   el.innerHTML = `
-    <div class="vr-lead">
-      <div class="vr-eyebrow"><span class="orb" aria-hidden="true"></span>${esc(laneEyebrow)}</div>
-      <h2 class="headline" id="verdict">${esc(v.headline)}</h2>
-      <p class="vr-story">${esc(v.story)}</p>
-      ${summaryCard}
-      ${confNudge}
-      <div class="action">
-        <button class="cta" id="cta">${esc(v.cta)}</button>
-        <div class="subactions">
+    <div class="vr-top">
+      <div class="vr-narr">
+        <div class="vr-eyebrow"><span class="orb" aria-hidden="true"></span>${esc(laneEyebrow)}</div>
+        <h2 class="headline" id="verdict">${esc(v.headline)}</h2>
+        <p class="vr-story">${esc(v.story)}</p>
+        ${metaLine}
+        <div class="action">
+          <button class="cta" id="cta">${esc(v.cta)}${arrow}</button>
           <button class="ghost record" id="record" type="button" title="Download a self-contained hand-off record"><span class="dl">${ICONS.download}</span> Download record</button>
-          <span class="sub-sep" aria-hidden="true"></span>
           <button class="ghost walk" id="walk"><span class="play">${ICONS.play}</span> Walk me through it</button>
         </div>
       </div>
+      <div class="vr-decided">
+        ${reasonsBlock}
+        ${lightenPill}
+        ${aiHeldBlock}
+        ${confirmBlock}
+        ${whyLighter}
+        ${confNudge}
+        ${seeFull}
+      </div>
     </div>
-    <aside class="vr-aside">
-      ${reasonsBlock}
-      ${whyLighter}
-      ${lightenPill}
-      ${confirmBlock}
-      ${aiHeldBlock}
-      ${seeFull}
-    </aside>`;
+    ${lanesBlock}`;
 
   announce(`${v.headline} ${v.story}`);
   updateFooter(r);
+  // header repo chip — name + an outcome-coloured dot
+  const repoChip = $('#th-repo'), repoSlug = $('#th-repo-slug');
+  if (repoChip && repoSlug) {
+    repoSlug.textContent = slug;
+    const dot = repoChip.querySelector('.th-repo-dot');
+    if (dot) dot.style.background = `var(--${outcome})`;
+    repoChip.hidden = false;
+  }
   if (shell.dataset.dock === 'open') renderDrawer();   // keep an open dock in sync with the verdict
 
   $('#trust-line').addEventListener('click', openDrawer);
@@ -742,7 +769,7 @@ function driverTile(c, i, r) {
       <div class="annot"><span class="up">${ICONS.arrowUp}</span> This line is the ${esc(ANNOT[c.id] || 'reason')}.${ev.line ? ` <span class="loc">${esc(ev.path)}:${ev.line}</span>` : ''}</div>
     </div>` : '';
   return `<div class="tile" style="animation-delay:${i * 70}ms">
-    <div class="ic">${ICONS[def.icon] || ICONS.check}</div>
+    <div class="ic num">${String(i + 1).padStart(2, '0')}</div>
     <div class="tx">
       <div class="label">${esc(label)}</div>
       ${desc ? `<div class="desc">${esc(desc)}</div>` : ''}
@@ -1177,6 +1204,7 @@ function reset() {
   corpus = null; cachedFacts = null; overrides = {}; nudgedKinds.clear(); caExpand = false; lastResult = null;
   setState('input');
   resetFooter();
+  const rc = $('#th-repo'); if (rc) rc.hidden = true;   // clear the header repo chip
   urlInput.value = ''; $('#analyze').disabled = true;
   attachments = []; renderAttachments();
   $('#dropzone').classList.remove('valid');
@@ -2147,6 +2175,7 @@ function initShell() {
   // The account icon is the single entry to the full Settings overlay (which
   // carries Appearance/theme, Intelligence, Privacy, About alongside Account).
   $('#account-btn')?.addEventListener('click', (e) => { e.stopPropagation(); openAccount(); });
+  $('#th-avatar')?.addEventListener('click', (e) => { e.stopPropagation(); openAccount(); });
 
   $('#new-check')?.addEventListener('click', reset);
   $('#dock-toggle')?.addEventListener('click', closeDrawer);

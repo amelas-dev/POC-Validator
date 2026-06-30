@@ -10,57 +10,57 @@
    =========================================================================== */
 
 :root {
-  /* ---- surfaces — cool, clean, near-white ---- */
-  --canvas: #F5F5F7;          /* signature light gray — the work canvas, the soul */
-  --white:  #FFFFFF;          /* predominant — rail, header, dock, footer, cards */
-  --gray:   #F5F5F7;          /* secondary plane */
-  --vista:  #D2D2D7;          /* control borders (inputs, segments, pills) */
-  --zircon: #E8E8ED;          /* tinted insets, evidence */
+  /* ---- surfaces — warm paper (the whole app is warm now) ---- */
+  --canvas: #F3EEE5;          /* warm cream — the work canvas */
+  --white:  #FBF8F2;          /* warm off-white — rail, header, dock, cards */
+  --gray:   #F0EADF;          /* secondary plane / segmented-control track */
+  --vista:  #E7DFD2;          /* control borders (inputs, segments, pills) */
+  --zircon: #EFE3D3;          /* warm tinted insets */
 
-  /* shared chrome — dark mode flips these three once */
-  --chrome-bg:   #FFFFFF;
-  --chrome-line: #E6E6EB;     /* region dividers — a touch softer than control borders */
-  --chrome-ink:  #1D1D1F;
+  /* shared chrome */
+  --chrome-bg:   #FBF8F2;
+  --chrome-line: #E7DFD2;
+  --chrome-ink:  #28231C;
 
-  /* ---- ink — neutral graphite grays ---- */
-  --ink:     #1D1D1F;         /* body text */
-  --muted:   #6E6E73;         /* meta / captions / icon rest */
-  --soft:    #86868B;         /* faintest text */
-  --hairline: rgba(0, 0, 0, 0.07);
-  --hover:   #F0F0F2;
-  --press:   #E6E6EB;
+  /* ---- ink — warm browns ---- */
+  --ink:     #28231C;         /* body / headlines */
+  --muted:   #6E655A;         /* meta / captions */
+  --soft:    #9A8E7E;         /* faintest text */
+  --hairline: rgba(110, 69, 39, 0.13);
+  --hover:   #EFE9DE;
+  --press:   #E7DFD2;
 
-  /* ---- accent — GRAPHITE, monochrome, SMALL surfaces only, never a fill ---- */
-  --brand:       #1D1D1F;     /* logo tile · active nav · primary CTA · focus ring */
-  --brand-press: #000000;
-  --brown:       #6E6E73;     /* caps subheads · two-tone · dock heading (neutral label gray) */
+  /* ---- accent — warm-dark for the logo tile / NEW CHECK / focus; terracotta lives
+       in the outcome triad (the action button takes the outcome colour) ---- */
+  --brand:       #28231C;
+  --brand-press: #3C342A;
+  --brown:       #9A8E7E;
 
-  /* ---- outcome triad — the ONLY colour; refined, desaturated, distinct ---- */
-  --ready: #2E9E6B;       --ready-glow: #E7F4EE;     /* emerald — "go" */
-  --developer: #4C6FBF;   --developer-glow: #EAEFFA;  /* cobalt — "hand to a dev" */
-  --signoff: #C2683F;     --signoff-glow: #F8ECE4;    /* terracotta — "sign-off" */
+  /* ---- outcome triad — the warm lanes ---- */
+  --ready: #5E7A52;       --ready-glow: #EFF4E9;     /* sage — "go" (lane 1) */
+  --developer: #B0843E;   --developer-glow: #F6ECDD;  /* amber — "developer" (lane 2) */
+  --signoff: #8A5733;     --signoff-glow: #F6ECDD;    /* terracotta — "sign-off" */
 
-  --error-ink: #C0392B;   /* decoupled from the triad — clear, not alarming */
+  --error-ink: #B0453A;
 
-  /* ---- type roles — Apple system stack throughout ---- */
-  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;     /* ALL-CAPS nav / labels / buttons */
-  --font-serif:   -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", system-ui, sans-serif;  /* the DISPLAY face — headlines / prompt */
-  --font-ui:      -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;     /* captions / utility / body */
+  /* ---- type — Schibsted Grotesk throughout ---- */
+  --font-display: 'Schibsted Grotesk', system-ui, -apple-system, sans-serif;
+  --font-serif:   'Schibsted Grotesk', system-ui, -apple-system, sans-serif;
+  --font-ui:      'Schibsted Grotesk', system-ui, -apple-system, sans-serif;
   --mono: "SF Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
   --ease: cubic-bezier(0.16, 1, 0.3, 1);
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 14px 40px -22px rgba(0, 0, 0, 0.22);
+  --shadow: 0 1px 2px rgba(40, 35, 28, 0.05), 0 14px 40px -22px rgba(40, 35, 28, 0.18);
 
-  --rail-w: 56px;
-  --head-h: 52px;
+  --rail-w: 58px;
+  --head-h: 62px;
   --foot-h: 30px;
-  /* expandable panels — each track is 0 when collapsed, its --*-open when expanded */
-  /* ---- warm paper — the result experience only (chrome stays graphite) ---- */
-  --paper:       #FBF5EC;   /* warm cream canvas */
-  --paper-ink:   #2B2118;   /* warm near-black */
-  --paper-muted: #7C6A59;   /* warm secondary */
-  --paper-soft:  #A0907E;   /* warm faint */
-  --paper-line:  rgba(122, 84, 48, 0.16);  /* warm hairline */
+  /* warm-paper aliases (kept for the result view + dark overrides) */
+  --paper:       #F3EEE5;
+  --paper-ink:   #28231C;
+  --paper-muted: #6E655A;
+  --paper-soft:  #9A8E7E;
+  --paper-line:  rgba(110, 69, 39, 0.13);
 
   --side-w: 0px;   --side-open: 248px;    /* left sidebar (recent checks) */
   --dock-w: 0px;   --dock-open: 408px;    /* right dock (the full check) */
@@ -76,7 +76,8 @@ html, body {
   font-family: var(--font-ui);
   font-size: 15px;
   -webkit-font-smoothing: antialiased;
-  font-feature-settings: "tnum" 1;
+  text-rendering: optimizeLegibility;
+  font-kerning: normal;
 }
 body { overflow: hidden; }   /* the shell owns the viewport; only .main scrolls */
 
@@ -201,15 +202,14 @@ body { overflow: hidden; }   /* the shell owns the viewport; only .main scrolls 
   padding: 10px 0 12px; gap: 4px; z-index: 4;
 }
 .brand {
-  width: 34px; height: 34px; border-radius: 9px; flex: none;
-  display: grid; place-items: center; margin-bottom: 10px;
-  background: var(--brand); color: #fff; text-decoration: none;
-  box-shadow: 0 2px 8px -2px color-mix(in srgb, var(--brand) 55%, transparent);
-  transition: transform 0.14s var(--ease), filter 0.18s;
+  width: 38px; height: 38px; border-radius: 10px; flex: none;
+  display: grid; place-items: center; margin-bottom: 6px;
+  background: var(--zircon); color: #6E4527; text-decoration: none;
+  transition: background 0.16s var(--ease);
 }
-.brand:hover { transform: translateY(-1px); filter: brightness(1.04); }
-.brand .brand-tile { width: 26px; height: 26px; display: block; }
-.brand svg { width: 26px; height: 26px; display: block; }
+.brand:hover { background: var(--hover); }
+.brand .brand-tile { width: 20px; height: 20px; display: block; }
+.brand svg { width: 20px; height: 20px; display: block; }
 
 .rail-tools { display: flex; flex-direction: column; align-items: center; gap: 4px; width: 100%; }
 .rail-foot { margin-top: auto; display: flex; flex-direction: column; align-items: center; gap: 8px; padding-top: 8px; }
@@ -225,7 +225,7 @@ body { overflow: hidden; }   /* the shell owns the viewport; only .main scrolls 
 .rail-btn[aria-current="page"] { color: var(--ink); }
 .rail-btn[aria-current="page"]::before {
   content: ""; position: absolute; left: -8px; top: 50%; transform: translateY(-50%);
-  width: 3px; height: 18px; border-radius: 0 3px 3px 0; background: var(--brand);
+  width: 3px; height: 18px; border-radius: 0 3px 3px 0; background: var(--signoff);
 }
 .rail-btn.dormant { opacity: 0.38; cursor: default; pointer-events: none; }
 .rail-btn.dormant:hover { background: none; color: var(--muted); }
@@ -264,26 +264,46 @@ body { overflow: hidden; }   /* the shell owns the viewport; only .main scrolls 
   background: var(--chrome-bg);
   border-bottom: 1px solid var(--chrome-line);
   display: flex; align-items: center; justify-content: space-between;
-  padding: 0 18px; z-index: 3;
+  padding: 0 22px; z-index: 3;
 }
+.th-brand { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.th-logo { width: 30px; height: 30px; flex: none; border-radius: 9px; background: #28231C; display: flex; align-items: flex-end; justify-content: center; gap: 2.5px; padding: 8px; }
+.th-logo i { width: 3px; flex: none; border-radius: 1px; display: block; }
+.th-logo i:nth-child(1) { height: 7px; background: #C9A06A; }
+.th-logo i:nth-child(2) { height: 12px; background: #E7D7C5; }
+.th-logo i:nth-child(3) { height: 9px; background: var(--signoff); }
 .th-name {
-  font-family: var(--font-display); font-size: 12px; font-weight: 500;
-  letter-spacing: 0.16em; text-transform: uppercase; color: var(--brown);
+  font-family: var(--font-display); font-size: 13px; font-weight: 800;
+  letter-spacing: 0.22em; text-transform: uppercase; color: var(--ink);
 }
-.th-actions { display: flex; align-items: center; gap: 8px; }
+.th-div { width: 1px; height: 20px; flex: none; background: var(--chrome-line); }
+.th-repo { display: inline-flex; align-items: center; gap: 8px; min-width: 0; height: 30px; padding: 0 12px; border: 1px solid var(--chrome-line); border-radius: 999px; background: var(--canvas); font-size: 12.5px; font-weight: 500; color: var(--muted); }
+.th-repo[hidden] { display: none; }   /* explicit display would otherwise defeat [hidden] */
+.th-brand:has(#th-repo[hidden]) .th-div { display: none; }   /* no divider when there's no repo */
+.th-repo #th-repo-slug { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.th-repo-dot { width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--signoff); }
+.th-actions { display: flex; align-items: center; gap: 14px; }
 .th-pill {
-  font-family: var(--font-display); font-size: 11px; font-weight: 500;
-  letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink);
-  background: var(--white); border: 1px solid var(--chrome-line); border-radius: 9px;
-  padding: 7px 14px; cursor: pointer; transition: background 0.16s, border-color 0.16s;
+  display: inline-flex; align-items: center; gap: 8px; height: 34px; padding: 0 16px;
+  font-family: var(--font-display); font-size: 11px; font-weight: 700;
+  letter-spacing: 0.14em; text-transform: uppercase; color: var(--canvas);
+  background: var(--ink); border: none; border-radius: 9px;
+  cursor: pointer; transition: background 0.16s;
 }
-.th-pill:hover { background: var(--hover); border-color: var(--brown); }
+.th-pill:hover { background: var(--brand-press); }
+.th-seg { display: flex; align-items: center; gap: 4px; padding: 3px; background: var(--gray); border: 1px solid var(--chrome-line); border-radius: 9px; }
 .th-icon {
-  width: 32px; height: 32px; border-radius: 9px; display: grid; place-items: center;
-  background: none; border: none; color: var(--muted); cursor: pointer; transition: background 0.16s, color 0.16s;
+  width: 30px; height: 26px; border-radius: 6px; display: grid; place-items: center;
+  background: none; border: none; color: var(--soft); cursor: pointer; transition: background 0.16s, color 0.16s;
 }
-.th-icon svg { width: 18px; height: 18px; }
-.th-icon:hover, .th-icon[aria-expanded="true"] { background: var(--hover); color: var(--ink); }
+.th-icon svg { width: 16px; height: 15px; }
+.th-icon:hover { color: var(--ink); }
+.th-icon[aria-pressed="true"] { background: var(--white); color: var(--ink); box-shadow: 0 1px 2px rgba(40,35,28,0.10); }
+.th-avatar {
+  width: 33px; height: 33px; flex: none; border-radius: 50%; border: none; cursor: pointer;
+  background: linear-gradient(150deg, #9A6336, #6E4527); color: #FBF6EE;
+  display: grid; place-items: center; font-family: var(--font-display); font-size: 13px; font-weight: 700;
+}
 
 .theme-seg { width: 100%; }
 .theme-seg button { flex: 1; justify-content: center; }
@@ -475,53 +495,56 @@ body { overflow: hidden; }   /* the shell owns the viewport; only .main scrolls 
    of reasons + the levers you can change) — on warm paper, no card. Tokens remap to the
    warm palette so every inherited component warms automatically. */
 .view-result {
-  --ink: var(--paper-ink); --muted: var(--paper-muted); --soft: var(--paper-soft);
-  --hairline: var(--paper-line); --chrome-line: var(--paper-line); --white: var(--paper);
-  --c-ink: color-mix(in srgb, var(--c) 64%, #000);
-  width: 100%; margin: 0 auto; align-items: start;
-  grid-template-columns: minmax(0, 1.16fr) minmax(0, 0.84fr);
-  column-gap: clamp(30px, 4.6vw, 80px); row-gap: 36px;
+  --c-ink: color-mix(in srgb, var(--c) 60%, #000);
+  width: 100%; max-width: 1180px; margin: 0 auto;
+  flex-direction: column; gap: clamp(28px, 3.4vw, 44px);
 }
-.canvas[data-state="result"] .view-result { display: grid; }   /* beat the shared flex rule */
+.canvas[data-state="result"] .view-result { display: flex; }
 #result:not([data-fresh="1"]).view-result { animation: none; }
 
-/* LEFT — the answer */
-.vr-lead { min-width: 0; align-self: center; }
+/* NARRATIVE | WHAT DECIDED IT — two columns that wrap on narrow widths */
+.vr-top { display: flex; flex-wrap: wrap; gap: clamp(28px, 4vw, 60px); align-items: flex-start; }
+.vr-narr { flex: 1 1 380px; min-width: 0; display: flex; flex-direction: column; }
+.vr-decided { flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 20px; padding-top: 4px; }
+
 .vr-eyebrow {
-  display: inline-flex; align-items: center; gap: 9px; margin: 0 0 16px;
-  font-family: var(--font-display); font-size: 11px; font-weight: 600;
-  letter-spacing: 0.13em; text-transform: uppercase; color: var(--c-ink);
+  display: inline-flex; align-items: center; gap: 9px; margin: 0 0 20px;
+  font-family: var(--font-display); font-size: 11px; font-weight: 700;
+  letter-spacing: 0.16em; text-transform: uppercase; color: var(--c);
   opacity: 0; animation: fade 0.5s var(--ease) 0.05s forwards;
 }
-.orb {   /* a small, glowing lane light */
-  width: 12px; height: 12px; flex: none; border-radius: 50%;
-  background: radial-gradient(circle at 35% 30%, color-mix(in srgb, var(--c) 45%, #fff), var(--c) 62%, color-mix(in srgb, var(--c) 72%, #000));
-  box-shadow: 0 0 0 4px var(--glow), 0 0 14px 1px color-mix(in srgb, var(--c) 60%, transparent);
+.orb {   /* the glowing lane dot */
+  width: 8px; height: 8px; flex: none; border-radius: 50%;
+  background: var(--c); box-shadow: 0 0 0 4px color-mix(in srgb, var(--c) 14%, transparent);
   transform: scale(0); animation: orb-in 0.5s var(--ease) 0.1s both;
 }
 @keyframes orb-in { to { transform: scale(1); } }
 .headline {
-  margin: 0; font-family: var(--font-serif); font-weight: 700;
-  letter-spacing: -0.035em; line-height: 0.98; color: var(--ink); text-wrap: balance;
-  font-size: clamp(40px, 5.6vw, 66px);
+  margin: 0; font-family: var(--font-display); font-weight: 800;
+  letter-spacing: -0.028em; line-height: 1.0; color: var(--ink); text-wrap: balance;
+  font-size: clamp(42px, 4.6vw, 60px);
   opacity: 0; transform: translateY(10px); animation: rise 0.55s var(--ease) 0.12s forwards;
 }
 .vr-story {
-  margin: 18px 0 0; max-width: 32ch;
-  font-family: var(--font-serif); font-size: clamp(16.5px, 1.5vw, 20px); line-height: 1.5;
-  letter-spacing: -0.01em; color: var(--ink); text-wrap: pretty;
+  margin: 24px 0 0; max-width: 30ch;
+  font-family: var(--font-ui); font-size: clamp(17px, 1.5vw, 20px); line-height: 1.5;
+  color: var(--muted); text-wrap: pretty;
   opacity: 0; transform: translateY(8px); animation: rise 0.55s var(--ease) 0.2s forwards;
 }
+.vr-meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 28px 0 0; font-size: 12.5px; color: var(--soft); }
+.vr-meta .vr-src { font-weight: 500; color: var(--muted); }
+.vr-meta .vr-dot { opacity: 0.7; }
 
 /* Entrance gating — the rise/fade choreography runs ONLY on the first reveal
    (#result[data-fresh="1"]); in-place re-renders snap straight to the final state. */
-#result:not([data-fresh="1"]) .vr-lead,
+#result:not([data-fresh="1"]) .vr-narr,
+#result:not([data-fresh="1"]) .vr-decided,
 #result:not([data-fresh="1"]) .vr-eyebrow,
 #result:not([data-fresh="1"]) .orb,
 #result:not([data-fresh="1"]) .headline,
 #result:not([data-fresh="1"]) .vr-story,
-#result:not([data-fresh="1"]) .vr-aside,
-#result:not([data-fresh="1"]) .summary,
+#result:not([data-fresh="1"]) .vr-meta,
+#result:not([data-fresh="1"]) .vr-lanes,
 #result:not([data-fresh="1"]) .reasons-eyebrow,
 #result:not([data-fresh="1"]) .tile,
 #result:not([data-fresh="1"]) .lighten { animation: none !important; opacity: 1 !important; transform: none !important; }
@@ -552,26 +575,25 @@ body { overflow: hidden; }   /* the shell owns the viewport; only .main scrolls 
 .summary-meta .sdot { margin: 0 6px; opacity: 0.55; }
 
 .reasons-eyebrow {
-  font-family: var(--font-display); font-size: 10.5px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase;
-  color: var(--muted); margin: 22px 0 11px; animation: fade 0.5s var(--ease) 0.4s both;
+  font-family: var(--font-display); font-size: 11px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase;
+  color: var(--soft); margin: 0; animation: fade 0.5s var(--ease) 0.4s both;
 }
-/* the reasons read as a LEDGER — hairline-separated rows, not stacked boxes */
-.tiles { display: flex; flex-direction: column; }
+/* WHAT DECIDED IT — numbered reasons; clean rows, no boxes, no dividers */
+.tiles { display: flex; flex-direction: column; gap: 20px; }
 .tile {
-  display: flex; align-items: flex-start; gap: 13px;
-  background: none; border: none; border-radius: 0;
-  padding: 15px 0; border-top: 1px solid var(--hairline);
+  display: flex; align-items: flex-start; gap: 14px;
+  background: none; border: none; border-radius: 0; padding: 0;
   opacity: 0; transform: translateY(8px); animation: rise 0.45s var(--ease) forwards;
 }
-.tile:first-child { border-top: none; padding-top: 4px; }
 .tile .ic {
-  width: 32px; height: 32px; flex: none; border-radius: 9px; display: grid; place-items: center; color: var(--c-ink);
-  background: color-mix(in srgb, var(--c) 16%, var(--paper));
+  width: 28px; height: 28px; flex: none; border-radius: 8px; display: grid; place-items: center;
+  color: var(--c-ink); background: var(--zircon);
+  font-family: var(--font-display); font-size: 11px; font-weight: 700;
 }
-.tile .ic svg { width: 17px; height: 17px; }
-.tile .tx { min-width: 0; padding-top: 2px; }
-.tile .label { font-family: var(--font-ui); font-size: 14.5px; font-weight: 600; color: var(--ink); letter-spacing: -0.006em; }
-.tile .desc { font-size: 13px; color: var(--muted); line-height: 1.45; margin-top: 3px; text-wrap: pretty; }
+.tile .ic svg { width: 15px; height: 15px; }
+.tile .tx { min-width: 0; padding-top: 1px; }
+.tile .label { font-family: var(--font-ui); font-size: 15.5px; font-weight: 600; color: var(--ink); letter-spacing: -0.006em; }
+.tile .desc { font-size: 13.5px; color: var(--muted); line-height: 1.45; margin-top: 3px; text-wrap: pretty; }
 
 .nudge {
   margin-top: 9px; display: inline-flex; align-items: center; gap: 6px;
@@ -582,72 +604,48 @@ body { overflow: hidden; }   /* the shell owns the viewport; only .main scrolls 
 }
 .nudge:hover { background: color-mix(in srgb, var(--c) 18%, var(--white)); }
 .nudge:active { transform: scale(0.97); }
-/* "Changed — undo" — same pill shape as .nudge but neutral/reverting, not coloured */
 .nudge.nudge-undo { color: var(--muted); background: var(--gray); border-color: var(--vista); }
 .nudge.nudge-undo:hover { background: var(--hover); color: var(--ink); }
 
-/* Action area — the CTA is the single hero; the walk link sits below it, lighter. */
-/* command bar — a confident primary, with the quiet secondaries on the line below */
-.action { display: flex; flex-direction: column; align-items: flex-start; gap: 14px; margin-top: 30px; }
-.action .cta { width: auto; }
-.subactions { display: inline-flex; align-items: center; gap: 14px; flex-wrap: wrap; }
-.subactions .record, .subactions .walk { margin: 0; align-self: auto; }
-.sub-sep { width: 1px; height: 13px; background: var(--hairline); flex: none; }
-
-/* RIGHT — the evidence ledger + the levers you can change */
-.vr-aside { min-width: 0; align-self: stretch; animation: fade 0.6s var(--ease) 0.3s both; }
-
-/* narrow: the spread folds to a single column — the answer, then the evidence */
-@media (max-width: 900px) {
-  .view-result { grid-template-columns: 1fr; row-gap: 28px; }
-  .vr-lead { align-self: start; }
-  .headline { font-size: clamp(36px, 9.5vw, 56px); }
-  .vr-story, .summary { max-width: none; }
-}
+/* command bar — a confident primary action + two quiet inline secondaries */
+.action { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; margin-top: 32px; }
 .cta {
-  border: none; border-radius: 14px; padding: 15px 24px;
-  font-family: var(--font-display); font-size: 12.5px; font-weight: 600; letter-spacing: 0.07em; text-transform: uppercase;
-  color: #fff; cursor: pointer;
-  /* Top stays at solid --c (preserves white-text contrast); a slight darken toward the
-     foot + the inset top highlight give the gloss without lowering legibility. */
-  background: linear-gradient(180deg, var(--c), color-mix(in srgb, var(--c) 88%, #000));
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, #fff 32%, transparent),
-    0 1px 2px color-mix(in srgb, var(--c) 48%, transparent),
-    0 12px 26px -10px color-mix(in srgb, var(--c) 66%, transparent);
-  transition: transform 0.12s var(--ease), filter 0.18s, box-shadow 0.22s var(--ease);
+  display: inline-flex; align-items: center; gap: 11px;
+  border: none; border-radius: 12px; height: 50px; padding: 0 26px;
+  font-family: var(--font-ui); font-size: 15px; font-weight: 600; letter-spacing: 0; text-transform: none;
+  color: #FBF6EE; cursor: pointer; background: var(--c);
+  box-shadow: 0 1px 2px rgba(40,35,28,0.14), 0 10px 26px -8px color-mix(in srgb, var(--c) 52%, transparent);
+  transition: background 0.16s, transform 0.12s var(--ease), box-shadow 0.22s var(--ease);
 }
-.cta:hover { filter: brightness(1.05); box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 32%, transparent), 0 1px 2px color-mix(in srgb, var(--c) 48%, transparent), 0 16px 32px -10px color-mix(in srgb, var(--c) 72%, transparent); }
+.cta:hover { background: color-mix(in srgb, var(--c) 90%, #000); box-shadow: 0 1px 2px rgba(40,35,28,0.14), 0 14px 30px -8px color-mix(in srgb, var(--c) 58%, transparent); }
 .cta:active { transform: scale(0.985); }
-.cta.done { background: color-mix(in srgb, var(--c) 16%, var(--white)); color: var(--c-ink); box-shadow: none; cursor: default; }
-.cta.sm { padding: 9px 16px; border-radius: 11px; box-shadow: none; background: var(--c); }
-.ghost { background: none; border: none; font: inherit; font-family: var(--font-ui); font-size: 14px; color: var(--muted); cursor: pointer; }
-.ghost:hover { color: var(--ink); }
+.cta .cta-arw { flex: none; }
+.cta.done { background: var(--zircon); color: var(--c-ink); box-shadow: none; cursor: default; }
+.cta.sm { height: auto; padding: 9px 16px; border-radius: 11px; box-shadow: none; font-size: 12.5px; }
+.ghost { display: inline-flex; align-items: center; gap: 8px; background: none; border: none; font: inherit; font-family: var(--font-ui); font-size: 13.5px; font-weight: 500; color: var(--muted); cursor: pointer; transition: color 0.16s; }
+.ghost:hover { color: var(--c); }
 .ghost.sm { font-size: 13px; }
+
+/* narrow: the two columns are already flex-wrap; just rein in the headline */
+@media (max-width: 720px) {
+  .headline { font-size: clamp(36px, 10vw, 52px); }
+  .vr-story { max-width: none; }
+}
 
 /* quiet "Download record" — a secondary ghost pill beside the CTA. Calm graphite
    chrome, hairline border; never competes with the coloured hero button. */
-/* Two quiet, unified secondaries below the hero CTA: Download record (slightly more
-   prominent, --muted) then the tertiary Walk-me-through link (--soft-weight). Both are
-   borderless text actions so the descent CTA → secondary → tertiary reads cleanly. */
-.record {
-  display: inline-flex; align-items: center; gap: 7px;
-  padding: 7px 12px; border-radius: 9px;
+/* the two inline secondaries beside the primary — plain ghost text + icon */
+.record, .walk {
+  display: inline-flex; align-items: center; gap: 8px; margin: 0; padding: 0;
   border: none; background: none; color: var(--muted);
-  font-family: var(--font-ui); font-size: 13px; font-weight: 500;
-  cursor: pointer; transition: color 0.18s, background 0.18s;
+  font-family: var(--font-ui); font-size: 13.5px; font-weight: 500;
+  cursor: pointer; transition: color 0.16s;
 }
-.record:hover { color: var(--ink); background: var(--hover); }
-.record .dl svg { width: 15px; height: 15px; }
-
-/* quiet "walk me through it" link — a standalone, de-emphasised row below the CTA,
-   clearly lighter in weight than the hero button it sits under. */
-.walk { align-self: center; display: inline-flex; align-items: center; gap: 7px; margin-top: 20px; font-size: 12.5px; color: var(--muted); border-bottom: 1px solid var(--hairline); padding-bottom: 1px; }
-.walk:hover { color: var(--ink); border-color: var(--ink); }
-.walk .play svg { width: 12px; height: 12px; }
+.record:hover, .walk:hover { color: var(--c); background: none; }
+.record .dl svg, .walk .play svg { width: 15px; height: 15px; }
 
 /* trust line */
-.trust { align-self: center; display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 4px 0 16px; background: none; border: none; padding: 0; cursor: pointer; font: inherit; font-family: var(--font-ui); font-size: 12.5px; color: var(--soft); }
+.trust { align-self: flex-start; display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 2px 0 0; background: none; border: none; padding: 0; cursor: pointer; font: inherit; font-family: var(--font-ui); font-size: 12.5px; color: var(--soft); }
 .trust .t-sep { color: var(--soft); opacity: 0.5; }
 .trust .t-link { color: var(--ink); font-weight: 500; border-bottom: 1px solid color-mix(in srgb, var(--ink) 32%, transparent); }
 .trust:hover .t-link { color: var(--brand); border-color: var(--brand); }
@@ -701,23 +699,22 @@ body { overflow: hidden; }   /* the shell owns the viewport; only .main scrolls 
 .confirm-assume.open .ca-body { display: flex; }
 .ca-body .assume { margin-top: 0; }
 
-/* "what would make it lighter" pill */
+/* "what would make it lighter" — a distinct callout card with a bolt coin */
 .lighten {
-  margin-top: 12px; width: 100%; text-align: left;
-  display: flex; align-items: flex-start; gap: 10px;
-  background: color-mix(in srgb, var(--c) 7%, var(--white));
-  border: 1px solid color-mix(in srgb, var(--c) 18%, transparent);
-  border-radius: 16px; padding: 13px 15px; cursor: pointer;
-  font: inherit; font-family: var(--font-ui); font-size: 13px; color: var(--ink); line-height: 1.45;
-  transition: background 0.16s var(--ease), transform 0.12s var(--ease);
+  margin-top: 2px; width: 100%; text-align: left;
+  display: flex; align-items: flex-start; gap: 12px;
+  background: var(--white);
+  border: 1px solid color-mix(in srgb, var(--c) 24%, var(--vista));
+  border-radius: 15px; padding: 16px 18px; cursor: pointer;
+  font: inherit; font-family: var(--font-ui); font-size: 13.5px; color: var(--ink); line-height: 1.5;
+  transition: border-color 0.16s var(--ease), box-shadow 0.16s var(--ease);
   animation: rise 0.45s var(--ease) 0.2s both;
 }
-.lighten:hover { background: color-mix(in srgb, var(--c) 12%, var(--white)); }
-.lighten:active { transform: scale(0.99); }
-.lighten .bolt { flex: none; color: var(--c); margin-top: 1px; }
-.lighten .bolt svg { width: 16px; height: 16px; }
-.lighten b { font-weight: 600; }
-.lighten em { color: var(--muted); font-style: normal; }
+.lighten:hover { border-color: var(--c); box-shadow: 0 8px 22px -14px color-mix(in srgb, var(--c) 60%, transparent); }
+.lighten .bolt { flex: none; width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center; background: var(--c); color: #FBF6EE; margin-top: 1px; }
+.lighten .bolt svg { width: 14px; height: 14px; }
+.lighten b { display: block; font-weight: 700; color: var(--ink); font-size: 14.5px; margin-bottom: 3px; }
+.lighten em { color: var(--c); font-style: normal; font-weight: 600; }
 
 /* "show me where" — code spotlight inside a reason tile */
 .show-where { margin-top: 9px; display: inline-flex; align-items: center; gap: 5px; background: none; border: none; padding: 0; cursor: pointer; font: inherit; font-family: var(--font-ui); font-size: 12px; color: var(--c); }
@@ -895,41 +892,58 @@ ol.lb-list { list-style: none; }
    Uses the outcome triad vars so it adapts to dark mode automatically.
    =========================================================================== */
 /* held downgrade — the read is lighter than the floor and not applied */
-.ai-held { margin-top: 18px; padding: 14px 16px; border-radius: 14px; background: color-mix(in srgb, var(--paper-ink) 5%, var(--paper)); border: 1px solid var(--hairline); font-size: 12.5px; color: var(--ink); line-height: 1.55; text-wrap: pretty; }
-.ai-held b { font-weight: 600; }
-.ai-apply { display: inline-block; margin-top: 10px; font: inherit; font-family: var(--font-ui); font-size: 12.5px; font-weight: 600; color: var(--paper); background: var(--c-ink); border: none; border-radius: 9px; padding: 8px 14px; cursor: pointer; transition: filter 0.15s, transform 0.1s; }
-.ai-apply:hover { filter: brightness(1.06); }
+.ai-held { margin-top: 2px; padding: 15px 18px; border-radius: 14px; background: color-mix(in srgb, var(--zircon) 50%, var(--white)); border: 1px dashed color-mix(in srgb, var(--c) 36%, var(--vista)); font-size: 12.5px; color: var(--muted); line-height: 1.5; text-wrap: pretty; display: flex; align-items: center; gap: 16px; }
+.ai-held > div { flex: 1; }
+.ai-held b { font-weight: 600; color: var(--ink); }
+.ai-apply { flex: none; display: inline-block; margin-top: 0; font: inherit; font-family: var(--font-ui); font-size: 12.5px; font-weight: 600; color: var(--c-ink); background: var(--white); border: 1px solid color-mix(in srgb, var(--c) 36%, var(--vista)); border-radius: 9px; padding: 9px 15px; cursor: pointer; white-space: nowrap; transition: border-color 0.15s, background 0.15s; }
+.ai-apply:hover { border-color: var(--c); background: var(--white); }
 .ai-apply:active { transform: scale(0.98); }
+
+/* ===== Governance lanes — the row across the foot of the verdict ===== */
+.vr-lanes { display: flex; flex-direction: column; gap: 14px; padding-top: 24px; border-top: 1px solid var(--vista); animation: fade 0.6s var(--ease) 0.34s both; }
+.lanes-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.lanes-title { font-family: var(--font-display); font-size: 11px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; color: var(--soft); }
+.lanes-note { font-size: 12px; color: var(--soft); }
+.lanes-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 16px; }
+.lane-tile { position: relative; display: flex; flex-direction: column; gap: 7px; padding: 16px 17px; border-radius: 13px; border: 1px solid var(--vista); background: var(--white); }
+.lane-tile[data-v="ready"] .ldot { background: var(--ready); }
+.lane-tile[data-v="developer"] .ldot { background: var(--developer); }
+.lane-tile[data-v="signoff"] .ldot { background: var(--signoff); }
+.lane-tile.current { border: 1.5px solid color-mix(in srgb, var(--c) 55%, var(--vista)); background: var(--glow); box-shadow: 0 6px 18px -12px color-mix(in srgb, var(--c) 50%, transparent); }
+.lane-badge { position: absolute; top: 13px; right: 13px; font-family: var(--font-display); font-size: 9px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: #FBF6EE; background: var(--c); padding: 3px 8px; border-radius: 6px; }
+.lane-h { display: flex; align-items: center; gap: 9px; font-size: 13.5px; font-weight: 700; color: var(--ink); }
+.lane-h .ldot { width: 8px; height: 8px; flex: none; border-radius: 50%; }
+.lane-d { font-size: 12.5px; line-height: 1.5; color: var(--muted); }
 
 /* ===========================================================================
    Dark mode — true-black Apple dark; the graphite accent inverts to near-white
    =========================================================================== */
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { color-scheme: dark;
-  --canvas: #000000;  --white: #1C1C1E;  --gray: #161618;
-  --vista: #38383A;   --zircon: #2C2C2E;
-  --chrome-bg: #1C1C1E; --chrome-line: rgba(255,255,255,0.10); --chrome-ink: #F5F5F7;
-  --ink: #F5F5F7;     --muted: #A1A1A6;  --soft: #8E8E93;
-  --hairline: rgba(255,255,255,0.10); --hover: #2C2C2E; --press: #38383A;
-  --brand: #F5F5F7; --brand-press: #FFFFFF; --brown: #98989D;
-  --ready: #34C77B;       --ready-glow: rgba(52,199,123,0.16);
-  --developer: #6E97E8;   --developer-glow: rgba(110,151,232,0.18);
-  --signoff: #E08A5C;     --signoff-glow: rgba(224,138,92,0.18);
-  --error-ink: #FF6B5C;
-  --paper: #16110C; --paper-ink: #F4EADD; --paper-muted: #B6A491; --paper-soft: #8C7E6F; --paper-line: rgba(255, 220, 180, 0.13);
+  --canvas: #17120C;  --white: #221A12;  --gray: #1C1610;
+  --vista: #43362A;   --zircon: #2E2417;
+  --chrome-bg: #1E1710; --chrome-line: rgba(255,226,188,0.10); --chrome-ink: #F4EADD;
+  --ink: #F4EADD;     --muted: #B6A491;  --soft: #8C7E6F;
+  --hairline: rgba(255,226,188,0.10); --hover: #2A2016; --press: #352A1C;
+  --brand: #F4EADD; --brand-press: #FFFFFF; --brown: #9E8E7C;
+  --ready: #7FA06E;       --ready-glow: rgba(127,160,110,0.16);
+  --developer: #D0A45E;   --developer-glow: rgba(208,164,94,0.18);
+  --signoff: #C9885E;     --signoff-glow: rgba(201,136,94,0.18);
+  --error-ink: #E8836F;
+  --paper: #17120C; --paper-ink: #F4EADD; --paper-muted: #B6A491; --paper-soft: #8C7E6F; --paper-line: rgba(255,226,188,0.12);
   --shadow: 0 1px 2px rgba(0,0,0,0.5), 0 22px 56px -30px rgba(0,0,0,0.85);
 }}
 :root[data-theme="dark"] { color-scheme: dark;   /* :root-scoped so a data-theme="dark" control (e.g. the theme seg button) isn't itself themed */
-  --canvas: #000000;  --white: #1C1C1E;  --gray: #161618;
-  --vista: #38383A;   --zircon: #2C2C2E;
-  --chrome-bg: #1C1C1E; --chrome-line: rgba(255,255,255,0.10); --chrome-ink: #F5F5F7;
-  --ink: #F5F5F7;     --muted: #A1A1A6;  --soft: #8E8E93;
-  --hairline: rgba(255,255,255,0.10); --hover: #2C2C2E; --press: #38383A;
-  --brand: #F5F5F7; --brand-press: #FFFFFF; --brown: #98989D;
-  --ready: #34C77B;       --ready-glow: rgba(52,199,123,0.16);
-  --developer: #6E97E8;   --developer-glow: rgba(110,151,232,0.18);
-  --signoff: #E08A5C;     --signoff-glow: rgba(224,138,92,0.18);
-  --error-ink: #FF6B5C;
-  --paper: #16110C; --paper-ink: #F4EADD; --paper-muted: #B6A491; --paper-soft: #8C7E6F; --paper-line: rgba(255, 220, 180, 0.13);
+  --canvas: #17120C;  --white: #221A12;  --gray: #1C1610;
+  --vista: #43362A;   --zircon: #2E2417;
+  --chrome-bg: #1E1710; --chrome-line: rgba(255,226,188,0.10); --chrome-ink: #F4EADD;
+  --ink: #F4EADD;     --muted: #B6A491;  --soft: #8C7E6F;
+  --hairline: rgba(255,226,188,0.10); --hover: #2A2016; --press: #352A1C;
+  --brand: #F4EADD; --brand-press: #FFFFFF; --brown: #9E8E7C;
+  --ready: #7FA06E;       --ready-glow: rgba(127,160,110,0.16);
+  --developer: #D0A45E;   --developer-glow: rgba(208,164,94,0.18);
+  --signoff: #C9885E;     --signoff-glow: rgba(201,136,94,0.18);
+  --error-ink: #E8836F;
+  --paper: #17120C; --paper-ink: #F4EADD; --paper-muted: #B6A491; --paper-soft: #8C7E6F; --paper-line: rgba(255,226,188,0.12);
   --shadow: 0 1px 2px rgba(0,0,0,0.5), 0 22px 56px -30px rgba(0,0,0,0.85);
 }
 /* On dark, the state-pill glow backgrounds are translucent over the dark dock
@@ -946,13 +960,9 @@ ol.lb-list { list-style: none; }
   :root:not([data-theme="light"]) .diff-table .state.rev { color: #F0A57E; }
 }
 
-/* on dark, the accent surface is near-white, so its text/glyph goes dark; and the
-   logo tile's accent-tinted halo would read as a white glow — neutralise it */
-:root[data-theme="dark"] .go, :root[data-theme="dark"] .cta, :root[data-theme="dark"] .brand { color: #1D1D1F; }
-:root[data-theme="dark"] .brand { box-shadow: 0 2px 10px -3px rgba(0,0,0,0.6); }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .go,
-  :root:not([data-theme="light"]) .cta { color: #1D1D1F; }
-  :root:not([data-theme="light"]) .brand { color: #1D1D1F; box-shadow: 0 2px 10px -3px rgba(0,0,0,0.6); } }
+/* on dark, the input "Check it" button keeps its cream surface → dark glyph */
+:root[data-theme="dark"] .go { color: #1D1D1F; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .go { color: #1D1D1F; } }
 /* On dark the triad is bright on the near-black surfaces, so the readable foreground of a
    --c tint IS the triad colour. The post-click "done" chip must keep that accent — the
    generic dark `.cta { color:#1D1D1F }` above would otherwise leave it dark-on-dark. */

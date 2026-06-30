@@ -90,11 +90,10 @@ try {
   await page.waitForSelector('#card[data-state="result"]', { timeout: 20000 });
   ok('a check renders a result', /Good to go|developer|sign-off|Lane/i.test(await page.textContent('.view-result')));
 
-  // the "What this looks like" summary is always present (AI text, or deterministic
-  // fallback when no model is available — as in this no-backend test run). The header
-  // copy was renamed from "Here's what I read" and now carries a neutral eye glyph.
-  ok('result shows the upload summary', !!(await page.$('.view-result .summary .summary-text')) && (await page.textContent('.view-result .summary .summary-text')).trim().length > 0);
-  ok('summary header reads "What this looks like"', /What this looks like/.test(await page.textContent('.view-result .summary .summary-head')));
+  // The warm "Validator.dc" redesign replaced the summary card with the plain-language
+  // verdict lead (.vr-story) plus a concise meta line (source · N files · looks like …).
+  ok('result shows the verdict lead', !!(await page.$('.view-result .vr-story')) && (await page.textContent('.view-result .vr-story')).trim().length > 0);
+  ok('result shows the source meta line', /file|looks like/i.test(await page.textContent('.view-result .vr-meta')));
 
   // footer in verdict state shows ONLY the coloured dot — no verdict words (the words
   // "Ready to host" / "Hand to a developer" / "Needs a sign-off" were removed).
