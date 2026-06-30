@@ -67,7 +67,7 @@ try {
 
   // ---- rail: every tool is live (no dormant placeholders) -------------------
   const tools = await page.$$eval('#rail-tools .rail-btn', (els) => els.map((b) => ({ tool: b.dataset.tool, dormant: b.classList.contains('dormant'), disabled: b.disabled })));
-  ok('rail has validator/history/library/docs', ['validator', 'history', 'library', 'docs'].every((t) => tools.some((x) => x.tool === t)));
+  ok('rail has search/history/library', ['search', 'history', 'library'].every((t) => tools.some((x) => x.tool === t)));
   ok('no dormant rail tools', tools.every((t) => !t.dormant && !t.disabled));
 
   // ---- History (clock) opens the recents sidebar ----------------------------
@@ -75,10 +75,10 @@ try {
   ok('History opens the sidebar', await page.getAttribute('#shell', 'data-side') === 'open');
   await page.click('#rail-tools .rail-btn[data-tool="history"]');   // toggle closed
 
-  // ---- Docs opens the lanes-reference drawer --------------------------------
-  await page.click('#rail-tools .rail-btn[data-tool="docs"]');
-  ok('Docs opens the bottom drawer', await page.getAttribute('#shell', 'data-bottom') === 'open');
-  await page.click('#rail-tools .rail-btn[data-tool="docs"]');
+  // ---- Search opens the search modal ----------------------------------------
+  await page.click('#rail-tools .rail-btn[data-tool="search"]');
+  ok('Search opens a modal', !!(await page.$('.search-overlay #search-input')));
+  await page.keyboard.press('Escape');
 
   // ---- empty canvas: example is a quiet chip, with hint + lane legend -------
   ok('example link reads "See an example →"', /See an example\s*→/.test(await page.textContent('#try-example')));

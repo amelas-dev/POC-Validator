@@ -58,8 +58,10 @@
     <!-- ============ Region B · Tool header ============ -->
     <header class="toolhead">
       <div class="th-brand">
-        <span class="th-logo" aria-hidden="true"><i></i><i></i><i></i></span>
-        <span class="th-name" id="th-name">Validator</span>
+        <button class="th-home" id="th-home" type="button" aria-label="Home — start a new check">
+          <span class="th-logo" aria-hidden="true"><i></i><i></i><i></i></span>
+          <span class="th-name" id="th-name">Validator</span>
+        </button>
         <span class="th-div" aria-hidden="true"></span>
         <span class="th-repo" id="th-repo" hidden><span class="th-repo-dot" aria-hidden="true"></span><span id="th-repo-slug"></span></span>
       </div>
@@ -69,14 +71,10 @@
         <button class="th-icon panel-toggle" id="panel-left" type="button" aria-pressed="false" aria-label="Toggle recent checks (left sidebar)" title="Recent checks">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="15" rx="2"/><line x1="9" y1="4.5" x2="9" y2="19.5"/><rect class="pf" x="4" y="5.5" width="4" height="13" rx="1" fill="currentColor" stroke="none"/></svg>
         </button>
-        <button class="th-icon panel-toggle" id="panel-bottom" type="button" aria-pressed="false" aria-label="Toggle lanes reference (bottom drawer)" title="Lanes reference">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="15" rx="2"/><line x1="3" y1="14" x2="21" y2="14"/><rect class="pf" x="4" y="15" width="16" height="3.5" rx="1" fill="currentColor" stroke="none"/></svg>
-        </button>
         <button class="th-icon panel-toggle" id="panel-right" type="button" aria-pressed="false" aria-label="Toggle the full check (right panel)" title="The full check">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="15" rx="2"/><line x1="15" y1="4.5" x2="15" y2="19.5"/><rect class="pf" x="16" y="5.5" width="4" height="13" rx="1" fill="currentColor" stroke="none"/></svg>
         </button>
         </div>
-        <button class="th-avatar" id="th-avatar" type="button" aria-label="Account">A</button>
       </div>
       <div class="sweep" id="sweep" aria-hidden="true"></div>
     </header>
@@ -161,44 +159,7 @@
       <div class="drop-hint" aria-hidden="true">Drop it — I’ve got it.</div>
     </main>
 
-    <!-- ============ Region · Bottom drawer (lanes reference) ============ -->
-    <aside class="bottompanel" id="bottompanel" aria-labelledby="bottom-title">
-      <div class="bottom-head">
-        <h2 id="bottom-title">Lanes — reference</h2>
-        <button class="x" id="bottom-close" type="button" aria-label="Close reference">×</button>
-      </div>
-      <div class="bottom-body">
-        <div class="lane-card" data-v="lane1">
-          <div class="lh"><span class="ldot"></span>Lane 1 · light path</div>
-          <p class="lp">Publish behind login after a quick safety check. The builder stays responsible.</p>
-        </div>
-        <div class="lane-card" data-v="lane2">
-          <div class="lh"><span class="ldot"></span>Lane 2 · developer</div>
-          <p class="lp">A developer builds it out before it goes live — a normal next step, on isolated hosting.</p>
-        </div>
-        <div class="lane-card" data-v="approve">
-          <div class="lh"><span class="ldot"></span>Approve · sign-off</div>
-          <p class="lp">A developer builds it and the AI Committee approves before launch — sensitive client or fund work.</p>
-        </div>
-        <div class="lane-gates">
-          <b>What pushes it heavier</b>
-          Updating a system of record · a client deliverable relied on · probabilistic output nobody reviews.
-        </div>
-        <div class="checks-ref" id="checks-ref">
-          <b class="checks-ref-h">The checks</b>
-          <ul class="checks-list">
-            <li class="check-ref" data-ref="§6"><span class="cr-ref">§6</span><span class="cr-body"><span class="cr-title">Where it runs</span><span class="cr-desc">A self-contained front-end can take the light path; a custom server or a live external data connection needs a developer.</span></span></li>
-            <li class="check-ref" data-ref="§5.1"><span class="cr-ref">§5.1</span><span class="cr-body"><span class="cr-title">Risk tier</span><span class="cr-desc">Who relies on it — just you, your team, or clients. Reaching clients raises the bar.</span></span></li>
-            <li class="check-ref" data-ref="§5.2"><span class="cr-ref">§5.2</span><span class="cr-body"><span class="cr-title">Data it works with</span><span class="cr-desc">Client &amp; fund data that's updated or unreviewed is the combination that needs a sign-off.</span></span></li>
-            <li class="check-ref" data-ref="§5.3"><span class="cr-ref">§5.3</span><span class="cr-body"><span class="cr-title">Writes to systems of record</span><span class="cr-desc">Changing an official source of truth pushes it heavier; reading or formatting does not.</span></span></li>
-            <li class="check-ref" data-ref="§5.4"><span class="cr-ref">§5.4</span><span class="cr-body"><span class="cr-title">Logic posture</span><span class="cr-desc">Fixed rules are fine. Judgment calls are too, as long as a person reviews each result.</span></span></li>
-            <li class="check-ref" data-ref="§5.5"><span class="cr-ref">§5.5</span><span class="cr-body"><span class="cr-title">Runtime AI calls</span><span class="cr-desc">Calling an outside AI service directly, instead of the approved one, needs more care.</span></span></li>
-            <li class="check-ref" data-ref="§5.6"><span class="cr-ref">§5.6</span><span class="cr-body"><span class="cr-title">Outbound calls &amp; scripts</span><span class="cr-desc">Sending or pulling data from outside the company, or loading third-party scripts.</span></span></li>
-            <li class="check-ref" data-ref="§5.7"><span class="cr-ref">§5.7</span><span class="cr-body"><span class="cr-title">Local data persistence</span><span class="cr-desc">Saving data on the device it runs on matters when that data is sensitive.</span></span></li>
-          </ul>
-        </div>
-      </div>
-    </aside>
+    <!-- (the lanes reference lived here; it's now the in-canvas Governance lanes) -->
 
     <!-- ============ Region D · Audit dock ============ -->
     <aside class="dock" id="dock" aria-labelledby="dock-title">

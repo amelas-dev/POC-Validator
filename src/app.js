@@ -366,7 +366,7 @@ const PHASES = ['Reading your tool…', 'Checking what it touches…', 'Working 
 function setPhase(msg) { const el = $('#phase'); if (el && msg) el.textContent = msg; }
 
 const MIN_DWELL_MS = 1150;      // a considered minimum, so the read never flickers past
-const READ_SOFT_CAP_MS = 3600;  // give the read a beat to land so the first answer is usually settled
+const AI_HARD_CAP_MS = 20000;   // wait for the AI read to settle before revealing; cap so a stalled read still lands
 let revealRun = 0;              // guards the post-reveal settle update against a newer run
 let recordedRun = -1;
 
@@ -452,26 +452,14 @@ async function run(loader) {
     corpus = loaded;
     cachedFacts = await analyzeFacts(corpus); // scan once (off-thread for big pastes); what-if toggles reuse this
     // The read works the un-inferable judgments in the background. We hold the
-    // reveal a short beat so the first answer is usually already settled; if the
-    // read is slower (a local model), we reveal the engine's read now and let the
-    // judgment settle into it in place — it never blocks and never hangs.
+    // ANALYZING state until that read has settled (or a hard cap), then reveal the
+    // result ONCE — no early engine-read flash that re-renders when the model lands.
     const reading = startAdvisor();
     await minDwell;
-    await Promise.race([reading, new Promise((r) => setTimeout(r, READ_SOFT_CAP_MS))]);
+    await Promise.race([reading, new Promise((r) => setTimeout(r, AI_HARD_CAP_MS))]);
     clearInterval(timer);
-    const settled = aiState !== 'running';
-    const reveal = () => { if (revealRun !== myReveal) return; renderResult(true); setState('result'); if (settled) finalizeRead(myReveal); };
+    const reveal = () => { if (revealRun !== myReveal) return; renderResult(true); setState('result'); finalizeRead(myReveal); };
     if (document.startViewTransition) document.startViewTransition(reveal); else reveal();
-    if (!settled) {
-      card.dataset.refining = 'on';   // a quiet "still settling" cue (subtle orb pulse)
-      reading.then(() => {
-        if (revealRun !== myReveal || card.dataset.state !== 'result') return;
-        card.removeAttribute('data-refining');
-        const upd = () => { renderResult(false); if (shell.dataset.dock === 'open') renderDrawer(); };   // settle-in is an in-place re-render — no entrance replay
-        if (document.startViewTransition && aiState === 'done') document.startViewTransition(upd); else upd();
-        finalizeRead(myReveal);
-      });
-    }
   } catch (err) {
     clearInterval(timer);
     card.removeAttribute('data-refining');
@@ -649,9 +637,6 @@ function renderResult(fresh = false) {
         ${reasonsBlock}
         ${lightenPill}
         ${aiHeldBlock}
-        ${confirmBlock}
-        ${whyLighter}
-        ${confNudge}
         ${seeFull}
       </div>
     </div>
@@ -773,7 +758,6 @@ function driverTile(c, i, r) {
     <div class="tx">
       <div class="label">${esc(label)}</div>
       ${desc ? `<div class="desc">${esc(desc)}</div>` : ''}
-      ${nudgeFor(c, r)}
       ${spotlight}
     </div>
   </div>`;
@@ -1208,10 +1192,9 @@ function reset() {
 // holds that content (the recents sidebar = your history; the bottom Lanes reference =
 // the docs), so the rail icons are live toggles rather than dead "coming soon" links.
 const TOOLS = [
-  { id: 'validator', label: 'Validator', enabled: true, icon: '<circle cx="11" cy="11" r="7"/><path d="M16 16l4.5 4.5"/>' },
+  { id: 'search', label: 'Search', enabled: true, action: 'search', icon: '<circle cx="11" cy="11" r="7"/><path d="M16 16l4.5 4.5"/>' },
   { id: 'history', label: 'History', enabled: true, panel: 'side', icon: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>' },
   { id: 'library', label: 'Library', enabled: true, icon: '<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/>' },
-  { id: 'docs', label: 'Docs', enabled: true, panel: 'bottom', icon: '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/><path d="M9 13h6M9 16h5"/>' },
 ];
 
 function renderRail() {
@@ -1233,14 +1216,61 @@ function renderRail() {
 function selectTool(id) {
   const t = TOOLS.find((x) => x.id === id);
   if (!t || !t.enabled) return;
-  // History/Docs toggle their panel (recents = history, lanes reference = docs); the main
-  // canvas stays on the Validator. Only a true canvas tool switches shell.dataset.tool.
+  // Search opens a modal; History toggles the recents panel; the main canvas stays on
+  // the Validator. Only a true canvas tool (Library) switches shell.dataset.tool.
+  if (t.action === 'search') { openSearch(); return; }
   if (t.panel === 'side') { setSidebar(shell.dataset.side !== 'open'); return; }
-  if (t.panel === 'bottom') { setBottom(shell.dataset.bottom !== 'open'); return; }
   shell.dataset.tool = id;
   $('#th-name').textContent = t.label;
   renderRail();
   if (id === 'library') loadLibrary();
+}
+
+// Home — clicking the wordmark/logo (or rail mark) returns to a fresh "add your POC"
+// screen, switching the canvas back to the Validator and clearing the current check.
+function goHome() {
+  shell.dataset.tool = 'validator';
+  $('#th-name').textContent = 'Validator';
+  renderRail();
+  reset();
+}
+
+// Search modal — find and re-open a saved check by name. Scoped to the saved library
+// (history); typing filters live, click/Enter re-opens, Esc/backdrop closes.
+function openSearch() {
+  if (document.querySelector('.search-overlay')) return;
+  const ov = document.createElement('div');
+  ov.className = 'search-overlay';
+  ov.innerHTML = `
+    <div class="search-modal" role="dialog" aria-modal="true" aria-label="Search your checks">
+      <div class="search-bar">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M16 16l4.5 4.5"/></svg>
+        <input type="search" id="search-input" placeholder="Search your checks…" autocomplete="off" spellcheck="false" aria-label="Search your checks" />
+        <kbd>esc</kbd>
+      </div>
+      <div class="search-results" id="search-results"></div>
+    </div>`;
+  document.body.appendChild(ov);
+  const input = ov.querySelector('#search-input');
+  const results = ov.querySelector('#search-results');
+  const render = () => {
+    const q = input.value.trim().toLowerCase();
+    const items = libraryCache.filter((a) => !q || (a.name || '').toLowerCase().includes(q)).slice(0, 12);
+    results.innerHTML = items.length
+      ? items.map((a) => `<button class="search-row" type="button" data-id="${esc(a.id)}" data-v="${esc(a.verdict || '')}">
+          <span class="sr-dot" aria-hidden="true"></span>
+          <span class="sr-tx"><span class="sr-name">${esc(a.name || 'Check')}</span><span class="sr-meta">${esc(a.verdict ? (RECENT_LABEL[a.verdict] || '') : sourceLabel(a.source))}${a.createdAt ? ` · ${esc(relTime(a.createdAt))}` : ''}</span></span>
+        </button>`).join('')
+      : `<div class="search-empty">${q ? 'No checks match that.' : 'Run a check and it’ll show up here to search.'}</div>`;
+  };
+  const close = () => { ov.remove(); document.removeEventListener('keydown', onKey); };
+  const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); close(); } };
+  document.addEventListener('keydown', onKey);
+  ov.addEventListener('mousedown', (e) => { if (e.target === ov) close(); });
+  results.addEventListener('click', (e) => { const row = e.target.closest('.search-row'); if (!row) return; close(); reopenAsset(row.dataset.id); });
+  input.addEventListener('input', render);
+  if (!libraryCache.length) loadLibrary().then(render); else render();
+  input.focus();
 }
 
 // ---- theme (Auto / Light / Dark), remembered -------------------------------
@@ -1343,7 +1373,7 @@ function buildSettings() {
     const act = e.target.closest('[data-act]')?.dataset.act;
     if (act === 'clear-recents') { clearAll(); }
     else if (act === 'toggle-save') { store.set('save', !savingEnabled()); renderSettingsBody(); }
-    else if (act === 'open-playbook') { closeSettings(); setBottom(true); }
+    else if (act === 'open-playbook') { closeSettings(); openDrawer(); }
     else if (act === 'recheck-ai') recheckAI();
     else if (act === 'sign-up') doAuth('sign-up');   // sign-in goes through the form's submit handler
     else if (act === 'sign-out') doSignOut();
@@ -1826,11 +1856,9 @@ function setSidebar(open) {
   if (open) renderSidebar();
   renderRail();   // keep the rail History toggle's pressed state in sync
 }
-function setBottom(open) {
-  shell.dataset.bottom = open ? 'open' : 'closed';
-  syncPanelBtn('bottom', open); store.set('panel.bottom', open);
-  renderRail();   // keep the rail Docs toggle's pressed state in sync
-}
+// The bottom "Lanes reference" drawer was removed (its content is now the in-canvas
+// Governance lanes). Kept as a no-op so any lingering callers stay harmless.
+function setBottom() {}
 
 // Deep-link from a dock condition's §-ref to its clause in the bottom reference:
 // open the drawer, then scroll the matching row into view and pulse a transient
@@ -2160,11 +2188,10 @@ function initShell() {
   // The account icon is the single entry to the full Settings overlay (which
   // carries Appearance/theme, Intelligence, Privacy, About alongside Account).
   $('#account-btn')?.addEventListener('click', (e) => { e.stopPropagation(); openAccount(); });
-  $('#th-avatar')?.addEventListener('click', (e) => { e.stopPropagation(); openAccount(); });
 
   $('#new-check')?.addEventListener('click', reset);
   $('#dock-toggle')?.addEventListener('click', closeDrawer);
-  $('#playbook-link')?.addEventListener('click', (e) => { e.preventDefault(); setBottom(true); });
+  $('#playbook-link')?.addEventListener('click', (e) => { e.preventDefault(); openDrawer(); });
 
   // learn where the read runs (local vs hosted) so the privacy line is honest
   initRead();
@@ -2172,10 +2199,11 @@ function initShell() {
   // expandable panels — left sidebar · bottom drawer · right dock
   loadLibrary();   // populate History/Library from the store (local now; cloud after initCloud)
   $('#panel-left')?.addEventListener('click', () => setSidebar(shell.dataset.side !== 'open'));
-  $('#panel-bottom')?.addEventListener('click', () => setBottom(shell.dataset.bottom !== 'open'));
   $('#panel-right')?.addEventListener('click', () => { if (shell.dataset.dock === 'open') closeDrawer(); else openDrawer(); });
   $('#side-close')?.addEventListener('click', () => setSidebar(false));
-  $('#bottom-close')?.addEventListener('click', () => setBottom(false));
+  // Home — the header wordmark/logo and the rail mark both return to a fresh check.
+  $('#th-home')?.addEventListener('click', goHome);
+  $('.brand')?.addEventListener('click', (e) => { e.preventDefault(); goHome(); });
 
   // History sidebar (delegated): click a saved check to re-open it; or clear all.
   $('#side-body')?.addEventListener('click', (e) => {
