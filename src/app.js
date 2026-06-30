@@ -17,6 +17,10 @@ import {
 // The asset Library: every checked tool is saved here (IndexedDB on this device, or
 // Supabase Storage when signed in) so History and the Library tool can re-open it.
 import { putAsset, getAsset, listAssets, deleteAsset, clearAssets } from './library/store.js';
+// Core application + governance-aware merge (see src/engine/{core,merge,overlap}.js and
+// docs/INVENTION_DISCLOSURE.md). All local + deterministic — no new network egress.
+import { createCore, previewMerge, mergeIntoCore, exportAudit } from './engine/core.js';
+import { getCore, putCore, clearCore } from './library/core-store.js';
 
 const $ = (s) => document.querySelector(s);
 const card = $('#card');       // the work canvas; data-state drives the view
@@ -1890,6 +1894,165 @@ async function clearAll() {
 }
 
 // ============================================================================
+//  CORE APPLICATION + governance-aware MERGE  ([INVENTION] surfaced in the UI)
+//  Designate a prior POC as the Core, then fold others into it: each merge PREVIEWS
+//  the explainable overlap, the evidence-linked governance delta, and the resulting
+//  lineage before you confirm, and appends to an exportable audit ledger. All local +
+//  deterministic. Engine: src/engine/{core,merge,overlap}.js; docs/INVENTION_DISCLOSURE.md.
+// ============================================================================
+let coreManifest = null;   // the current Core (or null), persisted in core-store (IndexedDB)
+const VLANE = { lane1: 'Lane 1 · light path', lane2: 'Lane 2 · developer', approve: 'Approve · sign-off' };
+const COND_LABEL = { host: 'Where it runs', c51: 'Who relies on it', c52: 'Data it works with', c53: 'Writes to records', c54: 'Logic posture', c55: 'Runtime AI calls', c56: 'Outbound calls', c57: 'Local data' };
+
+async function initCore() {
+  try { coreManifest = await getCore(); } catch { coreManifest = null; }
+  if (shell.dataset.tool === 'library') renderLibrary();
+}
+
+// Rebuild a normal corpus from a saved asset's stored blob — no re-run, no network.
+async function loadAssetCorpus(id) {
+  let a; try { a = await getAsset(id); } catch { a = null; }
+  if (!a || !a.blob) return null;
+  let p; try { p = JSON.parse(await a.blob.text()); } catch { return null; }
+  return { asset: a, corpus: { source: p.source || a.source || 'upload', label: p.label || a.name || 'Check', files: p.files || [], meta: p.meta || {}, notes: [] } };
+}
+const pocFromAsset = (a, corpus) => ({ id: a.id, label: a.name || corpus.label, source: a.source, corpus });
+const isConstituent = (id) => !!coreManifest && coreManifest.constituents.some((c) => c.pocId === id);
+
+async function setAsCore(id) {
+  const loaded = await loadAssetCorpus(id); if (!loaded) return;
+  coreManifest = createCore(loaded.asset.name || loaded.corpus.label || 'Core application', pocFromAsset(loaded.asset, loaded.corpus), { at: Date.now() });
+  try { await putCore(coreManifest); } catch {}
+  announce(`Core set to ${coreManifest.name}. Currently ${VLANE[coreManifest.currentVerdictSnapshot.verdict]}.`);
+  renderLibrary();
+}
+async function disbandCore() {
+  coreManifest = null; try { await clearCore(); } catch {}
+  announce('Core disbanded.'); renderLibrary();
+}
+
+// A small modal overlay matching the search-modal a11y pattern: inert background (focus
+// trap), Esc / backdrop to close, focus restored to the trigger on dismissal.
+function coreModal(innerHTML, label) {
+  const trigger = document.activeElement;
+  const ov = document.createElement('div');
+  ov.className = 'merge-overlay';
+  ov.innerHTML = `<div class="merge-modal" role="dialog" aria-modal="true" aria-label="${esc(label || 'Dialog')}">${innerHTML}</div>`;
+  document.body.appendChild(ov);
+  const behind = [shell, document.querySelector('.skip')].filter(Boolean);
+  behind.forEach((el) => el.setAttribute('inert', ''));
+  const close = (restore = true) => {
+    ov.remove(); document.removeEventListener('keydown', onKey);
+    behind.forEach((el) => el.removeAttribute('inert'));
+    if (restore && trigger && document.contains(trigger)) trigger.focus();
+  };
+  const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); close(); } };
+  document.addEventListener('keydown', onKey);
+  ov.addEventListener('mousedown', (e) => { if (e.target === ov) close(); });
+  return { ov, close };
+}
+
+// Preview a merge of a prior POC into the Core, then confirm. The preview shown IS the
+// committed result (deterministic) — see test/merge.mjs.
+async function openMergeFlow(id) {
+  if (!coreManifest || isConstituent(id)) return;
+  const loaded = await loadAssetCorpus(id); if (!loaded) return;
+  const incoming = pocFromAsset(loaded.asset, loaded.corpus);
+  let pv; try { pv = previewMerge(coreManifest, incoming, { assumptions: {} }); } catch { return; }
+  showMergePreview(incoming, pv);
+}
+
+function showMergePreview(incoming, pv) {
+  const ovl = pv.overlap, gd = pv.governanceDelta;
+  // ---- (1) Overlap — what's already in the Core ----------------------------
+  const sharedSignals = ovl.signalOverlap.perSignal.filter((s) => s.both);
+  const overlapHTML = `
+    <div class="mp-sec">
+      <div class="mp-eyebrow">Already in the Core</div>
+      <div class="mp-overlap-score">Overlap <b>${Math.round(ovl.similarity.score * 100)}%</b> <span class="mp-dim">(signals ${Math.round(ovl.similarity.components.signalJaccard * 100)}% · files ${Math.round(ovl.similarity.components.fileJaccard * 100)}% · function ${Math.round(ovl.similarity.components.functional * 100)}%)</span></div>
+      ${sharedSignals.length ? `<ul class="mp-list">${sharedSignals.map((s) => `<li><span class="mp-tag">§${esc(s.mapsTo)}</span> shared signal · <span class="mp-loc">${esc((s.evidenceA && s.evidenceA.path + ':' + s.evidenceA.line) || '')}</span> ↔ <span class="mp-loc">${esc((s.evidenceB && s.evidenceB.path + ':' + s.evidenceB.line) || '')}</span></li>`).join('')}</ul>` : '<div class="mp-empty">No shared governance signals.</div>'}
+      ${ovl.fileOverlap.pairs.length ? `<ul class="mp-list">${ovl.fileOverlap.pairs.slice(0, 6).map((p) => `<li><span class="mp-tag ${p.kind === 'exact' ? 'exact' : ''}">${p.kind} file</span> <span class="mp-loc">${esc(p.aPath)}</span> ↔ <span class="mp-loc">${esc(p.bPath)}</span></li>`).join('')}</ul>` : '<div class="mp-empty">No near-duplicate files.</div>'}
+    </div>`;
+  // ---- (2) Governance impact — re-resolved on the union --------------------
+  const govHTML = `
+    <div class="mp-sec">
+      <div class="mp-eyebrow">Governance impact</div>
+      ${gd.changed
+        ? `<div class="mp-gov changed" data-v="${esc(gd.after.verdict)}">
+             <div class="mp-gov-head">${esc(VLANE[gd.before.verdict])} → <b>${esc(VLANE[gd.after.verdict])}</b></div>
+             ${gd.causes.map((c) => `<div class="mp-cause"><span class="mp-tag">${esc(c.ref)}</span> ${esc(COND_LABEL[c.conditionId] || c.conditionId)}${c.evidence ? ` — <span class="mp-loc">${esc(c.evidence.path)}:${esc(String(c.evidence.line))}</span><div class="mp-ev">${esc(c.evidence.text)}</div>` : ''}<div class="mp-from">introduced by <b>${esc(c.fromPOC || incoming.label)}</b></div></div>`).join('')}
+           </div>`
+        : `<div class="mp-gov" data-v="${esc(gd.after.verdict)}"><div class="mp-gov-head">Stays <b>${esc(VLANE[gd.after.verdict])}</b></div><div class="mp-dim">Absorbing this POC doesn’t change the Core’s read.</div></div>`}
+    </div>`;
+  // ---- (3) Lineage — what each POC contributes -----------------------------
+  const lineHTML = `
+    <div class="mp-sec">
+      <div class="mp-eyebrow">Resulting lineage</div>
+      <ul class="mp-line">
+        ${coreManifest.constituents.map((c) => `<li><span class="mp-line-name">${esc(c.label)}</span><span class="mp-dim">${(c.contributedFiles || []).length} file(s) · ${(c.contributedSignals || []).length} signal(s)</span></li>`).join('')}
+        <li class="mp-line-new"><span class="mp-line-name">+ ${esc(incoming.label)}</span><span class="mp-dim">${pv.contributed.files.length} new file(s) · ${pv.contributed.signals.length} new signal(s)</span></li>
+      </ul>
+    </div>`;
+  const { ov, close } = coreModal(`
+    <div class="merge-head"><span class="mp-title">Merge “${esc(incoming.label)}” into ${esc(coreManifest.name)}</span><button class="mp-x" type="button" data-act="cancel" aria-label="Cancel">✕</button></div>
+    <div class="merge-body">${overlapHTML}${govHTML}${lineHTML}</div>
+    <div class="merge-foot"><button class="mp-btn ghost" type="button" data-act="cancel">Cancel</button><button class="mp-btn primary" type="button" data-act="confirm">Confirm merge</button></div>
+  `, 'Merge preview');
+  ov.addEventListener('click', async (e) => {
+    const act = e.target.closest('[data-act]')?.dataset.act;
+    if (act === 'cancel') close();
+    else if (act === 'confirm') { close(false); await confirmMerge(incoming); }
+  });
+  ov.querySelector('.mp-btn.primary')?.focus();
+}
+
+async function confirmMerge(incoming) {
+  if (!coreManifest) return;
+  let res; try { res = mergeIntoCore(coreManifest, incoming, { assumptions: {}, at: Date.now() }); } catch { return; }
+  coreManifest = res.manifest;
+  try { await putCore(coreManifest); } catch {}
+  const gd = res.preview.governanceDelta;
+  announce(gd.changed ? `Merged ${incoming.label}. The Core moved to ${VLANE[gd.after.verdict]}.` : `Merged ${incoming.label}. The Core stays ${VLANE[gd.after.verdict]}.`);
+  renderLibrary();
+}
+
+// Lineage / audit drawer — constituents, the full append-only ledger, and JSON export.
+function openCoreLineage() {
+  if (!coreManifest) return;
+  const m = coreManifest;
+  const ledgerHTML = m.ledger.map((e) => {
+    const gd = e.governanceDelta;
+    return `<li class="cl-entry"><div class="cl-when">${e.event === 'create' ? 'Founded' : 'Merged'} ${e.sourcePoc ? `· ${esc(e.sourcePoc.label || '')}` : ''}</div>${gd ? `<div class="cl-delta${gd.changed ? ' changed' : ''}">${gd.changed ? `${esc(VLANE[gd.before.verdict])} → ${esc(VLANE[gd.after.verdict])}` : 'no governance change'}</div>` : ''}<div class="cl-hash">hash ${esc((e.resultHash || '').slice(0, 12))}</div></li>`;
+  }).join('');
+  const { ov, close } = coreModal(`
+    <div class="merge-head"><span class="mp-title">${esc(m.name)} — lineage &amp; audit</span><button class="mp-x" type="button" data-act="close" aria-label="Close">✕</button></div>
+    <div class="merge-body">
+      <div class="mp-sec"><div class="mp-gov" data-v="${esc(m.currentVerdictSnapshot.verdict)}"><div class="mp-gov-head">Current read: <b>${esc(VLANE[m.currentVerdictSnapshot.verdict] || m.currentVerdictSnapshot.verdict)}</b></div><div class="mp-dim">${m.constituents.length} constituent POC(s) · corpus hash ${esc((m.contentHash || '').slice(0, 12))}</div></div></div>
+      <div class="mp-sec"><div class="mp-eyebrow">Constituents</div><ul class="mp-line">${m.constituents.map((c) => `<li><span class="mp-line-name">${esc(c.label)}</span><span class="mp-dim">${(c.contributedFiles || []).length} file(s) · ${(c.contributedSignals || []).length} signal(s)</span></li>`).join('')}</ul></div>
+      <div class="mp-sec"><div class="mp-eyebrow">Audit ledger (append-only)</div><ul class="cl-ledger">${ledgerHTML}</ul></div>
+    </div>
+    <div class="merge-foot"><button class="mp-btn ghost danger" type="button" data-act="disband">Disband Core</button><button class="mp-btn primary" type="button" data-act="export">Export audit record (JSON)</button></div>
+  `, 'Core lineage and audit');
+  ov.addEventListener('click', (e) => {
+    const act = e.target.closest('[data-act]')?.dataset.act;
+    if (act === 'close') close();
+    else if (act === 'export') exportAuditFile();
+    else if (act === 'disband') { close(); disbandCore(); }
+  });
+}
+function exportAuditFile() {
+  if (!coreManifest) return;
+  const data = JSON.stringify(exportAudit(coreManifest), null, 2);
+  const url = URL.createObjectURL(new Blob([data], { type: 'application/json' }));
+  const link = document.createElement('a');
+  link.href = url; link.download = `${slugifyName(coreManifest.name)}-audit.json`;
+  document.body.appendChild(link); link.click(); link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  announce('Audit record exported.');
+}
+const slugifyName = (s) => String(s || 'core').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'core';
+
+// ============================================================================
 //  Expandable panels — left sidebar (recent checks) · bottom drawer (reference)
 //  · right dock (the full check, handled by openDrawer/closeDrawer below). Each
 //  is a real grid region with a header panel-toggle, remembered across reloads.
@@ -1975,21 +2138,34 @@ function renderLibrary() {
   const items = libraryCache.filter((a) => !q || (a.name || '').toLowerCase().includes(q));
   // The compare toolbar reflects the toggle state and, when armed, the picks + CTA.
   renderCompareBar();
+  renderCoreBanner();
   if (!items.length) {
     grid.innerHTML = `<div class="lib-empty">${q ? 'No saved checks match your search.' : 'Nothing saved yet — run a check and it’ll appear here.'}</div>`;
     return;
   }
   grid.dataset.compare = compareMode ? 'on' : '';
+  // Core lineage: the founder (constituents[0]) shows a Core chip; other constituents show
+  // "Merged"; everything else offers "Set as Core" (no Core yet) or "Merge into Core".
+  const coreId = coreManifest && coreManifest.constituents[0] ? coreManifest.constituents[0].pocId : null;
+  const constituentIds = new Set(coreManifest ? coreManifest.constituents.map((c) => c.pocId) : []);
   grid.innerHTML = items.map((a) => {
     const picked = comparePicks.indexOf(a.id);
     const pickTag = compareMode && picked >= 0 ? `<span class="lib-pick" aria-hidden="true">${picked === 0 ? 'A' : 'B'}</span>` : '';
-    return `<div class="lib-card${compareMode ? ' selectable' : ''}${picked >= 0 ? ' picked' : ''}" data-id="${esc(a.id)}"${compareMode ? ` role="button" tabindex="0" aria-pressed="${picked >= 0}"` : ''}>
+    const isCore = a.id === coreId;
+    const isMerged = !isCore && constituentIds.has(a.id);
+    const coreChip = isCore ? '<span class="lib-core-chip" title="This is the Core application">Core</span>'
+      : isMerged ? '<span class="lib-merged-chip" title="Merged into the Core">Merged in</span>' : '';
+    const coreAct = (isCore || isMerged) ? ''
+      : coreManifest ? `<button class="lib-act core" type="button" data-act="merge" data-id="${esc(a.id)}" title="Fold this POC into the Core and see the governance impact">Merge into Core</button>`
+      : `<button class="lib-act core" type="button" data-act="set-core" data-id="${esc(a.id)}" title="Make this the Core application">Set as Core</button>`;
+    return `<div class="lib-card${compareMode ? ' selectable' : ''}${picked >= 0 ? ' picked' : ''}${isCore ? ' is-core' : ''}" data-id="${esc(a.id)}"${compareMode ? ` role="button" tabindex="0" aria-pressed="${picked >= 0}"` : ''}>
       <div class="lib-card-head">
         <span class="lib-name" title="${esc(a.name || 'Check')}">${pickTag}${esc(a.name || 'Check')}</span>
-        ${a.verdict ? `<span class="lib-badge" data-v="${esc(a.verdict)}">${esc(VERDICT_SHORT[a.verdict] || '')}</span>` : ''}
+        ${coreChip}${a.verdict ? `<span class="lib-badge" data-v="${esc(a.verdict)}">${esc(VERDICT_SHORT[a.verdict] || '')}</span>` : ''}
       </div>
       <div class="lib-meta">${esc(sourceLabel(a.source))}${a.fileCount ? ` · ${a.fileCount} file${a.fileCount === 1 ? '' : 's'}` : ''}${a.createdAt ? ` · ${esc(relTime(a.createdAt))}` : ''}</div>
       ${compareMode ? '' : `<div class="lib-actions">
+        ${coreAct}
         <button class="lib-act" type="button" data-act="recheck" data-id="${esc(a.id)}">Re-check</button>
         ${a.source === 'github' ? `<button class="lib-act" type="button" data-act="drift" data-id="${esc(a.id)}" title="Re-fetch the repo's current HEAD and show what changed">Check for drift</button>` : ''}
         <button class="lib-act" type="button" data-act="download" data-id="${esc(a.id)}">Download</button>
@@ -1997,6 +2173,33 @@ function renderLibrary() {
       </div>`}
     </div>`;
   }).join('');
+}
+
+// The Core banner sits above the grid: the Core's name, its current combined read, the
+// constituent count, and a way into the lineage / audit drawer. Removed when no Core is set.
+function renderCoreBanner() {
+  const grid = $('#lib-grid'); if (!grid) return;
+  let bn = $('#lib-core-banner');
+  if (!coreManifest) { if (bn) bn.remove(); return; }
+  if (!bn) {
+    bn = document.createElement('div');
+    bn.id = 'lib-core-banner';
+    bn.className = 'lib-core-banner';
+    grid.parentNode.insertBefore(bn, grid.parentNode.firstChild);
+    bn.addEventListener('click', (e) => {
+      if (e.target.closest('[data-core="lineage"]')) openCoreLineage();
+    });
+  }
+  const v = coreManifest.currentVerdictSnapshot.verdict;
+  const n = coreManifest.constituents.length;
+  bn.innerHTML = `
+    <div class="lcb-main">
+      <span class="lcb-chip">Core</span>
+      <span class="lcb-name" title="${esc(coreManifest.name)}">${esc(coreManifest.name)}</span>
+      <span class="lib-badge" data-v="${esc(v)}">${esc(VERDICT_SHORT[v] || '')}</span>
+      <span class="lcb-meta">${n} POC${n === 1 ? '' : 's'} in lineage</span>
+    </div>
+    <button class="lib-clear" type="button" data-core="lineage">Lineage &amp; audit</button>`;
 }
 
 // The compare toolbar lives just above the grid. Off: a single "Compare" toggle.
@@ -2274,6 +2477,8 @@ function initShell() {
       else if (btn.dataset.act === 'drift') checkDrift(id, btn);
       else if (btn.dataset.act === 'download') downloadAsset(id);
       else if (btn.dataset.act === 'remove') removeAsset(id);
+      else if (btn.dataset.act === 'set-core') setAsCore(id);
+      else if (btn.dataset.act === 'merge') openMergeFlow(id);
       return;
     }
     const card = e.target.closest('.lib-card[data-id]');
@@ -2298,6 +2503,8 @@ function initShell() {
 
   // optional cloud: resolve any persisted session, then keep the UI in step with it
   initCloud();
+  // load any previously-set Core application (local IndexedDB)
+  initCore();
 }
 
 // Resolve the saved session (if cloud is configured) and react to sign-in/out.
