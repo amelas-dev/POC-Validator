@@ -166,7 +166,6 @@ body { overflow: hidden; }   /* the shell owns the viewport; only .main scrolls 
 .panel-toggle .pf { opacity: 0; transition: opacity 0.16s var(--ease); }
 .panel-toggle[aria-pressed="true"] { background: var(--hover); color: var(--brand); }
 .panel-toggle[aria-pressed="true"] .pf { opacity: 1; }
-.th-divider { width: 1px; height: 18px; background: var(--chrome-line); margin: 0 3px; flex: none; }
 
 /* ---- Region A · Activity rail ---------------------------------------- */
 .rail {
@@ -261,16 +260,6 @@ body { overflow: hidden; }   /* the shell owns the viewport; only .main scrolls 
 .th-icon svg { width: 18px; height: 18px; }
 .th-icon:hover, .th-icon[aria-expanded="true"] { background: var(--hover); color: var(--ink); }
 
-.opts-menu {
-  position: absolute; top: calc(100% + 6px); right: 12px; z-index: 40;
-  background: var(--white); border: 1px solid var(--chrome-line); border-radius: 12px;
-  box-shadow: var(--shadow); padding: 12px; min-width: 200px;
-}
-.opts-group { display: flex; flex-direction: column; gap: 8px; }
-.opts-label {
-  font-family: var(--font-display); font-size: 10px; font-weight: 500;
-  letter-spacing: 0.12em; text-transform: uppercase; color: var(--soft);
-}
 .theme-seg { width: 100%; }
 .theme-seg button { flex: 1; justify-content: center; }
 
@@ -386,6 +375,29 @@ body { overflow: hidden; }   /* the shell owns the viewport; only .main scrolls 
 }
 .linkish:hover { color: var(--brand); border-color: var(--brand); }
 
+/* ---- empty canvas — quiet example chip, drop hint, lane legend ---- */
+/* the example link reads as a calm bordered secondary chip, not a heavy filled CTA */
+.ex-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--white); border: 1px solid var(--vista); border-radius: 999px;
+  padding: 7px 14px; font: inherit; font-family: var(--font-ui); font-size: 13px;
+  color: var(--muted); cursor: pointer;
+  transition: background 0.16s var(--ease), border-color 0.16s var(--ease), color 0.16s var(--ease);
+}
+.ex-chip:hover { background: var(--hover); border-color: var(--brown); color: var(--ink); }
+
+/* one-line muted hint below the example */
+.drop-tip { margin: 10px 2px 0; font-size: 12.5px; color: var(--soft); line-height: 1.4; }
+.drop-tip b { color: var(--muted); font-weight: 500; }
+
+/* a faint 3-dot lane legend previewing the payoff (decorative, aria-hidden) */
+.lane-legend { list-style: none; margin: 18px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 16px; }
+.lane-legend li { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--soft); }
+.lane-legend li::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--vista); flex: none; }
+.lane-legend li[data-v="lane1"]::before  { background: var(--ready); }
+.lane-legend li[data-v="lane2"]::before  { background: var(--developer); }
+.lane-legend li[data-v="approve"]::before { background: var(--signoff); }
+
 .collapsible { max-height: 0; overflow: hidden; transition: max-height 0.3s var(--ease), margin 0.3s var(--ease); }
 .collapsible.open { max-height: 220px; margin-top: 16px; }
 .collapsible input {
@@ -426,6 +438,23 @@ body { overflow: hidden; }   /* the shell owns the viewport; only .main scrolls 
 @keyframes orb-in { to { transform: scale(1); opacity: 1; } }
 @keyframes orb-pulse { 0% { box-shadow: 0 0 0 9px var(--glow), 0 8px 22px -6px transparent; } 40% { box-shadow: 0 0 0 17px color-mix(in srgb, var(--c) 12%, transparent), 0 8px 22px -6px transparent; } 100% { box-shadow: 0 0 0 9px var(--glow), 0 8px 22px -6px transparent; } }
 
+/* Entrance-animation gating — the rise+fade choreography runs ONLY on the first
+   reveal (#result[data-fresh="1"]). In-place re-renders (nudge / seg / apply-lighter)
+   clear data-fresh, so these elements snap to their final state instantly. */
+#result:not([data-fresh="1"]) .orb,
+#result:not([data-fresh="1"]) .headline,
+#result:not([data-fresh="1"]) .summary,
+#result:not([data-fresh="1"]) .reasons-eyebrow,
+#result:not([data-fresh="1"]) .tile,
+#result:not([data-fresh="1"]) .lighten { animation: none !important; opacity: 1 !important; transform: none !important; }
+
+/* "refining" cue — while the read settles, the orb breathes gently */
+.canvas[data-refining] .orb { animation: orb-breathe 1.8s ease-in-out infinite; }
+@keyframes orb-breathe {
+  0%, 100% { transform: scale(1); box-shadow: 0 0 0 9px var(--glow), 0 8px 22px -6px transparent; }
+  50% { transform: scale(1.03); box-shadow: 0 0 0 14px color-mix(in srgb, var(--c) 14%, transparent), 0 8px 22px -6px transparent; }
+}
+
 .headline {
   margin: 0;   /* h2.headline — strip the UA heading margins so layout is unchanged */
   font-family: var(--font-serif); font-weight: 700; letter-spacing: -0.028em; line-height: 1.03;
@@ -433,11 +462,8 @@ body { overflow: hidden; }   /* the shell owns the viewport; only .main scrolls 
   opacity: 0; transform: translateY(8px); animation: rise 0.45s var(--ease) 0.16s forwards;
 }
 @keyframes rise { to { opacity: 1; transform: none; } }
-.story { font-family: var(--font-ui); font-size: 16px; color: var(--muted); line-height: 1.55; margin: 13px 0 4px; max-width: 52ch; letter-spacing: -0.005em; animation: fade 0.5s var(--ease) 0.3s both; }
-.caption { font-family: var(--font-ui); font-size: 12.5px; color: var(--soft); margin-bottom: 20px; animation: fade 0.5s var(--ease) 0.36s both; }
-.caption .slug { color: var(--muted); }
 
-/* "Here's what I read" — the plain-language summary of the upload, so the user can
+/* "What this looks like" — the plain-language summary of the upload, so the user can
    confirm the app understood what they posted. Calm card; AI-written when available,
    deterministic one-liner otherwise. */
 .summary {
@@ -446,7 +472,7 @@ body { overflow: hidden; }   /* the shell owns the viewport; only .main scrolls 
   animation: fade 0.5s var(--ease) 0.34s both;
 }
 .summary-head { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-display); font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--soft); margin-bottom: 7px; }
-.summary-head svg { width: 13px; height: 13px; color: var(--brand); }
+.summary-head svg { width: 13px; height: 13px; color: var(--soft); }
 .summary-text { font-family: var(--font-ui); font-size: 15px; line-height: 1.5; color: var(--ink); margin: 0; letter-spacing: -0.003em; }
 .summary-meta { font-size: 12px; color: var(--soft); margin-top: 9px; }
 .summary-meta .slug { color: var(--muted); font-weight: 500; }
@@ -479,9 +505,12 @@ body { overflow: hidden; }   /* the shell owns the viewport; only .main scrolls 
 }
 .nudge:hover { background: color-mix(in srgb, var(--c) 18%, var(--white)); }
 .nudge:active { transform: scale(0.97); }
+/* "Changed — undo" — same pill shape as .nudge but neutral/reverting, not coloured */
+.nudge.nudge-undo { color: var(--muted); background: var(--gray); border-color: var(--vista); }
+.nudge.nudge-undo:hover { background: var(--hover); color: var(--ink); }
 
-.action { display: flex; align-items: center; gap: 16px; margin-top: 24px; }
-.action .spacer { flex: 1; }
+/* Action area — the CTA is the single hero; the walk link sits below it, lighter. */
+.action { display: flex; justify-content: flex-end; align-items: center; margin-top: 24px; }
 .cta {
   border: none; border-radius: 11px; padding: 12px 22px;
   font-family: var(--font-display); font-size: 12px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase;
@@ -495,16 +524,14 @@ body { overflow: hidden; }   /* the shell owns the viewport; only .main scrolls 
 .ghost:hover { color: var(--ink); }
 .ghost.sm { font-size: 13px; }
 
-/* quiet "walk me through it" link */
-.walk { display: inline-flex; align-items: center; gap: 7px; border-bottom: 1px solid var(--hairline); padding-bottom: 1px; }
+/* quiet "walk me through it" link — a standalone, de-emphasised row below the CTA,
+   clearly lighter in weight than the hero button it sits under. */
+.walk { display: inline-flex; align-items: center; gap: 7px; margin-top: 12px; font-size: 12.5px; color: var(--soft); border-bottom: 1px solid var(--hairline); padding-bottom: 1px; }
 .walk:hover { color: var(--ink); border-color: var(--ink); }
-.walk .play svg { width: 13px; height: 13px; }
+.walk .play svg { width: 12px; height: 12px; }
 
 /* trust line */
 .trust { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: -10px 0 18px; background: none; border: none; padding: 0; cursor: pointer; font: inherit; font-family: var(--font-ui); font-size: 12.5px; color: var(--soft); }
-.trust .t-proven { color: var(--ready); display: inline-flex; align-items: center; gap: 5px; }
-.trust .t-proven svg { width: 13px; height: 13px; }
-.trust .t-assumed { color: var(--muted); }
 .trust .t-sep { color: var(--soft); opacity: 0.5; }
 .trust .t-link { color: var(--brown); border-bottom: 1px solid var(--hairline); }
 .trust:hover .t-link { color: var(--brand); border-color: var(--brand); }
@@ -606,9 +633,6 @@ body { overflow: hidden; }   /* the shell owns the viewport; only .main scrolls 
 .tech .meta-line { font-size: 12px; color: var(--soft); margin-top: 6px; }
 
 .cert-block { display: flex; flex-direction: column; gap: 5px; background: var(--gray); border-radius: 12px; padding: 12px 14px; margin: 10px 0 12px; font-size: 13px; }
-.cert-proven { color: var(--ready); display: flex; align-items: center; gap: 6px; }
-.cert-proven svg { width: 14px; height: 14px; }
-.cert-assumed { color: var(--muted); }
 .cert-conf { display: block; font-size: 12.5px; color: var(--error-ink); margin-top: 4px; line-height: 1.45; }
 
 .lighten-block { background: var(--gray); border-radius: 12px; padding: 14px 16px; margin: 6px 0 14px; transition: box-shadow 0.3s var(--ease); }
@@ -642,6 +666,12 @@ body { overflow: hidden; }   /* the shell owns the viewport; only .main scrolls 
 .shell[data-outcome="ready"]     .foot-l .v-dot { background: var(--ready); }
 .shell[data-outcome="developer"] .foot-l .v-dot { background: var(--developer); }
 .shell[data-outcome="signoff"]   .foot-l .v-dot { background: var(--signoff); }
+
+/* Verdict state: the left zone holds ONLY the coloured dot (no verdict words).
+   Centre it as a deliberate status light — a faint ring so the lone dot reads as
+   intentional rather than a stray pixel, and no leftover gap from absent text. */
+#foot-verdict[data-kind="verdict"] { gap: 0; }
+#foot-verdict[data-kind="verdict"] .v-dot { width: 8px; height: 8px; box-shadow: 0 0 0 3px var(--hover); }
 
 /* ===========================================================================
    Walkthrough — focused mode (spotlight over the canvas, chrome washes back)
@@ -691,73 +721,15 @@ body { overflow: hidden; }   /* the shell owns the viewport; only .main scrolls 
 }
 
 /* ===========================================================================
-   Local AI assist — chip on the card · badges · dock sanity-check · toggle
+   Local AI assist — the held-downgrade card (silent-core: never names the AI)
    Uses the outcome triad vars so it adapts to dark mode automatically.
    =========================================================================== */
-/* status chip under the trust line */
-.ai-chip { display: inline-flex; align-items: center; gap: 8px; margin: -6px 0 16px; padding: 8px 12px; border-radius: 10px; font-family: var(--font-ui); font-size: 12.5px; line-height: 1.3; border: 1px solid var(--vista); background: var(--gray); color: var(--muted); }
-.ai-chip .ai-sub { color: var(--soft); font-size: 11.5px; }
-.ai-chip svg { width: 15px; height: 15px; flex: none; }
-button.ai-chip { cursor: pointer; transition: background 0.15s, border-color 0.15s, transform 0.1s; }
-button.ai-chip:hover { background: var(--hover); }
-button.ai-chip:active { transform: scale(0.99); }
-.ai-chip.ai-done.ai-agree { color: var(--ready); border-color: color-mix(in srgb, var(--ready) 30%, var(--vista)); background: var(--ready-glow); }
-.ai-chip.ai-done.ai-agree .ai-sub { color: color-mix(in srgb, var(--ready) 55%, var(--soft)); }
-.ai-chip.ai-done.ai-caution { color: var(--signoff); border-color: color-mix(in srgb, var(--signoff) 30%, var(--vista)); background: var(--signoff-glow); }
-.ai-chip.ai-done.ai-caution .ai-sub { color: color-mix(in srgb, var(--signoff) 55%, var(--soft)); }
-.ai-chip.ai-done.ai-lighter { color: var(--developer); border-color: color-mix(in srgb, var(--developer) 30%, var(--vista)); background: var(--developer-glow); }
-.ai-chip.ai-failed { color: var(--soft); }
-.ai-chip.ai-running { color: var(--brown); }
-.ai-spin { width: 13px; height: 13px; border-radius: 50%; border: 2px solid var(--vista); border-top-color: var(--brown); display: inline-block; flex: none; animation: ai-spin 0.8s linear infinite; }
-@keyframes ai-spin { to { transform: rotate(360deg); } }
-
-/* the AI toggle in the options menu */
-.ai-toggle { display: inline-flex; align-items: center; gap: 9px; background: none; border: none; padding: 4px 0; cursor: pointer; font: inherit; font-family: var(--font-ui); color: var(--ink); }
-.ai-toggle:disabled { cursor: not-allowed; opacity: 0.55; }
-.ai-tg-track { width: 34px; height: 20px; border-radius: 999px; background: var(--vista); position: relative; transition: background 0.18s var(--ease); flex: none; }
-.ai-tg-thumb { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--white); box-shadow: 0 1px 2px rgba(0,0,0,0.2); transition: transform 0.18s var(--ease); }
-.ai-toggle.on .ai-tg-track { background: var(--brand); }
-.ai-toggle.on .ai-tg-thumb { transform: translateX(14px); }
-.ai-tg-txt { font-size: 12.5px; color: var(--muted); }
-.opts-hint { margin: 2px 0 0; font-size: 11.5px; color: var(--soft); line-height: 1.4; max-width: 232px; }
-
-/* AI badge + reason on assumption rows (dock) */
-.ai-badge { display: inline-flex; align-items: center; gap: 3px; font-family: var(--font-display); font-size: 9px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--brown); background: color-mix(in srgb, var(--brown) 14%, var(--white)); padding: 3px 6px; border-radius: 6px; }
-.ai-badge svg { width: 11px; height: 11px; }
-.ai-assume-why { font-size: 12px; color: var(--muted); line-height: 1.45; margin: 6px 0 0; padding-left: 2px; }
-.ai-assume-why b { color: var(--brown); font-weight: 600; }
-
-/* trust-line + cert-block "AI-judged" counts */
-.trust .t-ai { color: var(--brown); }
-.cert-ai { color: var(--brown); display: flex; align-items: center; gap: 6px; }
-.cert-ai svg { width: 13px; height: 13px; }
-
-/* AI sanity-check block at the top of the dock */
-.ai-block { border: 1px solid var(--vista); border-radius: 12px; padding: 13px 15px; margin: 10px 0 12px; background: var(--gray); font-size: 13px; }
-.ai-block.ai-agree { border-color: color-mix(in srgb, var(--ready) 35%, var(--vista)); background: color-mix(in srgb, var(--ready-glow) 70%, var(--white)); }
-.ai-block.ai-caution { border-color: color-mix(in srgb, var(--signoff) 35%, var(--vista)); background: color-mix(in srgb, var(--signoff-glow) 70%, var(--white)); }
-.ai-block.ai-lighter { border-color: color-mix(in srgb, var(--developer) 35%, var(--vista)); }
-.ai-block.ai-block-failed, .ai-block.ai-block-running { color: var(--muted); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.ai-block.ai-block-failed svg, .ai-block.ai-block-running svg { width: 15px; height: 15px; color: var(--brown); }
-.ai-bk-head { display: flex; align-items: center; gap: 7px; font-family: var(--font-display); font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--brown); }
-.ai-bk-head svg { width: 15px; height: 15px; }
-.ai-bk-model { font-family: var(--font-ui); font-size: 11px; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--soft); margin-left: auto; }
-.ai-bk-verdict { margin-top: 8px; font-size: 13.5px; color: var(--ink); }
-.ai-bk-reason { margin-top: 4px; font-family: var(--font-ui); color: var(--muted); line-height: 1.45; }
-.ai-bk-fields { margin-top: 10px; display: grid; gap: 7px; }
-.ai-bk-field { display: grid; grid-template-columns: 86px 1fr; gap: 2px 10px; font-size: 12px; }
-.ai-bk-k { color: var(--soft); font-family: var(--font-display); font-size: 9.5px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; padding-top: 2px; }
-.ai-bk-v { color: var(--ink); font-weight: 600; }
-.ai-bk-v em { color: var(--soft); font-weight: 400; font-style: normal; }
-.ai-bk-why { grid-column: 2; color: var(--muted); line-height: 1.4; }
-.ai-bk-foot { margin-top: 10px; font-size: 11px; color: var(--soft); line-height: 1.45; }
-/* held downgrade — the AI read is lighter than the floor and not applied */
+/* held downgrade — the read is lighter than the floor and not applied */
 .ai-held { margin-top: 10px; padding: 10px 12px; border-radius: 9px; background: color-mix(in srgb, var(--developer) 12%, var(--white)); border: 1px solid color-mix(in srgb, var(--developer) 28%, var(--vista)); font-size: 12.5px; color: var(--ink); line-height: 1.5; }
 .ai-held b { font-weight: 600; }
 .ai-apply { display: inline-block; margin-top: 9px; font: inherit; font-family: var(--font-ui); font-size: 12.5px; font-weight: 600; color: var(--white); background: var(--developer); border: none; border-radius: 8px; padding: 7px 13px; cursor: pointer; transition: filter 0.15s, transform 0.1s; }
 .ai-apply:hover { filter: brightness(1.06); }
 .ai-apply:active { transform: scale(0.98); }
-@media (prefers-reduced-motion: reduce) { .ai-spin { animation: none; } }
 
 /* ===========================================================================
    Dark mode — true-black Apple dark; the graphite accent inverts to near-white
@@ -872,11 +844,23 @@ button.ai-chip:active { transform: scale(0.99); }
 @media (max-width: 480px) {
   .th-name { display: none; }
   .toolhead { justify-content: flex-end; }
+  /* the assumption segments are the only 3-option segs with long labels; on a
+     narrow phone the row can't fit them (the .chk row reserves space for the icon
+     and status pill), so an inline-flex seg overflows + clips its last option.
+     Stack the question over a full-width seg whose options stack vertically. */
+  .assume { flex-direction: column; align-items: stretch; gap: 6px; }
+  .assume .seg { flex-direction: column; width: 100%; }
+  .assume .seg button { flex: none; text-align: left; white-space: normal; line-height: 1.3;
+    border-right: none; border-bottom: 1px solid var(--vista); }
+  .assume .seg button:last-child { border-bottom: none; }
 }
 
 /* coarse pointers: bigger targets */
 @media (pointer: coarse) {
   .rail-btn, .th-icon, .pill-attach { min-width: 44px; min-height: 44px; }
+  /* the in-result / in-dock / overlay controls were left at fine-pointer sizes */
+  .seg button, .lib-act, .set-navitem, .set-eye { min-height: 44px; }
+  .chip-x, .dock-head .x, #side-close, #bottom-close { min-width: 44px; min-height: 44px; }
 }
 
 /* ===========================================================================
@@ -884,8 +868,9 @@ button.ai-chip:active { transform: scale(0.99); }
    =========================================================================== */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
-  .headline, .story, .caption, .tile, .reasons-eyebrow, .orb { opacity: 1 !important; transform: none !important; }
+  .headline, .summary, .tile, .reasons-eyebrow, .lighten, .orb { opacity: 1 !important; transform: none !important; }
   .orb { transform: scale(1) !important; }
+  .canvas[data-refining] .orb { animation: none; }
   .shell { transition: none !important; }
 }
 @media (forced-colors: active) {
@@ -1011,6 +996,18 @@ button.set-row:hover { background: var(--hover); }
 .set-input::placeholder { color: var(--soft); }
 .set-input:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 14%, transparent); }
 .set-input:disabled { opacity: 0.55; }
+/* password row — the input plus a borderless show/hide eye button overlaid at its right */
+.set-pass { position: relative; }
+.set-pass .set-input { padding-right: 40px; }
+.set-eye {
+  position: absolute; top: 50%; right: 6px; transform: translateY(-50%);
+  width: 30px; height: 30px; border: none; border-radius: 8px;
+  display: grid; place-items: center; background: none; color: var(--soft); cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.set-eye svg { width: 17px; height: 17px; }
+.set-eye:hover { background: var(--hover); color: var(--ink); }
+.set-eye[aria-pressed="true"] { color: var(--ink); }
 .set-row-auth { display: flex; gap: 9px; padding: 14px 17px; border-top: 1px solid var(--hairline); }
 .set-btn.primary { background: var(--brand); color: var(--white); border-color: var(--brand); }
 .set-btn.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--brand) 86%, var(--white)); }

@@ -80,14 +80,29 @@ try {
   ok('Docs opens the bottom drawer', await page.getAttribute('#shell', 'data-bottom') === 'open');
   await page.click('#rail-tools .rail-btn[data-tool="docs"]');
 
+  // ---- empty canvas: example is a quiet chip, with hint + lane legend -------
+  ok('example link reads "See an example →"', /See an example\s*→/.test(await page.textContent('#try-example')));
+  ok('example link is an ex-chip', await page.$eval('#try-example', (b) => b.classList.contains('ex-chip')));
+  ok('empty canvas shows the lane legend (3 dots)', (await page.$$('.lane-legend li')).length === 3);
+
   // ---- run a check via the built-in example ---------------------------------
   await page.click('#try-example');
   await page.waitForSelector('#card[data-state="result"]', { timeout: 20000 });
   ok('a check renders a result', /Good to go|developer|sign-off|Lane/i.test(await page.textContent('.view-result')));
 
-  // the "Here's what I read" summary is always present (AI text, or deterministic
-  // fallback when no model is available — as in this no-backend test run).
+  // the "What this looks like" summary is always present (AI text, or deterministic
+  // fallback when no model is available — as in this no-backend test run). The header
+  // copy was renamed from "Here's what I read" and now carries a neutral eye glyph.
   ok('result shows the upload summary', !!(await page.$('.view-result .summary .summary-text')) && (await page.textContent('.view-result .summary .summary-text')).trim().length > 0);
+  ok('summary header reads "What this looks like"', /What this looks like/.test(await page.textContent('.view-result .summary .summary-head')));
+
+  // footer in verdict state shows ONLY the coloured dot — no verdict words (the words
+  // "Ready to host" / "Hand to a developer" / "Needs a sign-off" were removed).
+  ok('footer verdict shows colour dot, no words', !!(await page.$('#foot-verdict .v-dot')) && (await page.textContent('#foot-verdict')).trim() === '');
+
+  // the grey ".story" paragraph was removed from the rendered result (announce() still
+  // uses it for screen readers, but it is no longer painted).
+  ok('result has no .story paragraph', (await page.$$('.view-result .story')).length === 0);
 
   // ---- the check was saved -> History shows it, re-openable -----------------
   await page.click('#rail-tools .rail-btn[data-tool="history"]');

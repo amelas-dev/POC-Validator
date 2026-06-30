@@ -85,8 +85,14 @@
             <ul class="attachments" id="attachments" aria-label="Attached snippets" hidden></ul>
 
             <div class="aux">
-              <button class="linkish" id="try-example" type="button">try an example</button>
+              <button class="linkish ex-chip" id="try-example" type="button">See an example →</button>
             </div>
+            <ul class="lane-legend" aria-hidden="true">
+              <li data-v="lane1">ready</li>
+              <li data-v="lane2">developer</li>
+              <li data-v="approve">sign-off</li>
+            </ul>
+            <p class="drop-tip">or drop a folder, .zip, or workbook — or just paste your code</p>
 
             <div class="collapsible" id="token-row">
               <input type="password" id="token" placeholder="GitHub access token, then press Check again" autocomplete="off" aria-label="GitHub personal access token" />
@@ -174,7 +180,7 @@
       </div>
       <div class="dock-body" id="drawer-body"></div>
       <div class="colophon-mini">
-        A quick read, not the final word — your AI operations lead makes the hosting call,
+        A quick read, not the final word — your AI Operations Lead makes the hosting call,
         under your organisation’s POC triage &amp; hosting playbook.
       </div>
     </aside>
@@ -183,13 +189,13 @@
     <footer class="foot" role="contentinfo">
       <div class="foot-l" id="foot-verdict" data-kind="privacy">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-        Read-only · your code is only ever read, never changed.
+        Read-only · read once to score it, never stored, never changed.
       </div>
       <div class="foot-c" id="foot-conf"></div>
       <div class="foot-r">
         <span class="foot-disclaimer">Indication only — your AI Operations Lead makes the call</span>
         <span class="foot-sep">·</span>
-        <a class="foot-link" href="#" id="playbook-link">POC Triage</a>
+        <a class="foot-link" href="#" id="playbook-link">POC triage</a>
       </div>
     </footer>
 

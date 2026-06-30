@@ -145,12 +145,14 @@ export async function listAssetsCloud() {
   if (!c || !_user) return [];
   const { data, error } = await c
     .from(ASSETS_TABLE)
-    .select('id, name, content_type, size_bytes, storage_path, created_at')
+    .select('id, name, content_type, size_bytes, storage_path, verdict, source, file_count, created_at')
     .order('created_at', { ascending: false });
   if (error) throw error;
   return (data || []).map((r) => ({
     id: r.id, name: r.name, type: r.content_type,
     size: r.size_bytes, storagePath: r.storage_path,
+    verdict: r.verdict ?? null, source: r.source ?? null,
+    fileCount: r.file_count ?? null,
     createdAt: r.created_at ? Date.parse(r.created_at) : 0,
   }));
 }
@@ -172,6 +174,10 @@ export async function putAssetCloud(rec) {
     content_type: rec.type || blob?.type || null,
     size_bytes: rec.size ?? blob?.size ?? null,
     storage_path: path,
+    verdict: rec.verdict ?? null,
+    source: rec.source ?? null,
+    file_count: rec.fileCount ?? null,
+    created_at: rec.createdAt ? new Date(rec.createdAt).toISOString() : undefined,
   });
   if (error) throw error;
   return rec.id;

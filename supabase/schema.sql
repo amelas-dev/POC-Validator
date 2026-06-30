@@ -56,8 +56,20 @@ create table if not exists public.library_assets (
   name          text not null,         -- original filename
   content_type  text,                  -- mime type
   size_bytes    bigint,
-  storage_path  text not null          -- path within the lane-library bucket
+  storage_path  text not null,         -- path within the lane-library bucket
+  verdict       text,                  -- lane key carried from the check: ready / developer / signoff
+  source        text,                  -- e.g. github url / "uploaded files" / spreadsheet name
+  file_count    integer                -- how many files made up the saved asset
 );
+
+-- Migration for EXISTING projects (created before verdict/source/file_count were
+-- added). Safe to run repeatedly — each column is only added if it's missing.
+-- created_at already existed on the original table, so it's included for
+-- completeness but is a no-op there.
+alter table public.library_assets add column if not exists verdict      text;
+alter table public.library_assets add column if not exists source       text;
+alter table public.library_assets add column if not exists file_count   integer;
+alter table public.library_assets add column if not exists created_at    timestamptz not null default now();
 
 create index if not exists library_assets_user_created_idx
   on public.library_assets (user_id, created_at desc);

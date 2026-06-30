@@ -33,6 +33,7 @@ const store = {
 let corpus = null;
 let cachedFacts = null;   // assumption-independent facts; scanned once, reused per what-if toggle
 let overrides = {};
+let nudgedKinds = new Set();   // assumption kinds the user flipped via a nudge — lets us offer an inline undo
 let lastResult = null;
 let currentWalkClose = null;  // teardown handle for an active walkthrough overlay
 
@@ -96,7 +97,7 @@ function setState(s) {
 const OUTCOME = { lane1: 'ready', lane2: 'developer', approve: 'signoff' };
 
 const VERDICT = {
-  ready: { headline: 'Good to go.', story: 'This can go live the light way — published behind login after a quick safety check. You stay responsible for what it does.', cta: 'Publish it', done: 'Copied ✓ — paste to publish', who: 'publish' },
+  ready: { headline: 'Good to go.', story: 'This can go live the light way — published behind login after a quick safety check. You stay responsible for what it does.', cta: 'Publish it', done: 'Copied ✓ — paste to publish', who: 'whoever publishes it' },
   developer: { headline: 'Hand it to a developer.', story: 'A great start. A developer should build it out before it goes live — a normal next step, not a problem.', cta: 'Hand off to a developer', done: 'Copied ✓ — paste to your dev', who: 'a developer' },
   signoff: { headline: 'Needs a sign-off first.', story: 'It touches sensitive client or fund work, so a developer builds it and a committee gives the OK before launch.', cta: 'Request a sign-off', done: 'Copied ✓ — paste to the committee', who: 'the AI Committee' },
 };
@@ -153,6 +154,7 @@ const ICONS = {
   sparkles: I('<path d="M12 4l1.5 4.5L18 10l-4.5 1.5L12 16l-1.5-4.5L6 10l4.5-1.5z"/><path d="M18.5 14l.7 2 2 .7-2 .7-.7 2-.7-2-2-.7 2-.7z"/>'),
   globe: I('<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c2.6 2.7 2.6 15.3 0 18M12 3c-2.6 2.7-2.6 15.3 0 18"/>'),
   download: I('<path d="M12 4v10"/><path d="M8 11l4 4 4-4"/><path d="M5 19h14"/>'),
+  eye: I('<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/>'),
   check: I('<path d="M5 12.5l4.5 4.5L19 7"/>'),
   bolt: I('<path d="M13 3L5 13h6l-1 8 8-10h-6z"/>'),
   chev: I('<path d="M9 6l6 6-6 6"/>'),
@@ -387,13 +389,24 @@ function extractFactsViaWorker(corpus) {
     const w = getScanWorker();
     if (!w) { rejectP(new Error('no worker')); return; }
     const id = ++workerSeq;
-    const cleanup = () => { w.removeEventListener('message', onMsg); w.removeEventListener('error', onErr); };
+    // Watchdog: if the worker never replies (hung scan / wedged thread), give up after
+    // 8s, kill the worker, and reject — analyzeFacts then falls back to the synchronous
+    // scan, so a single bad worker can't hang the read forever.
+    let watchdog = null;
+    const cleanup = () => { if (watchdog) { clearTimeout(watchdog); watchdog = null; } w.removeEventListener('message', onMsg); w.removeEventListener('error', onErr); };
     const onMsg = (e) => {
       if (!e.data || e.data.id !== id) return;   // ignore results from a superseded run
       cleanup();
       if (e.data.ok) resolveP(e.data.core); else rejectP(new Error(e.data.error || 'worker scan failed'));
     };
     const onErr = (err) => { cleanup(); workerBroken = true; rejectP(err); };
+    watchdog = setTimeout(() => {
+      cleanup();
+      workerBroken = true;
+      try { w.terminate(); } catch {}
+      if (scanWorker === w) scanWorker = null;
+      rejectP(new Error('worker scan timed out'));
+    }, 8000);
     w.addEventListener('message', onMsg);
     w.addEventListener('error', onErr);
     try { w.postMessage({ id, corpus }); } catch (err) { cleanup(); rejectP(err); }
@@ -413,6 +426,7 @@ async function run(loader) {
   busyRun = true;
   clearError();
   overrides = {};
+  nudgedKinds.clear();
   setState('analyzing');
   announce('Reading your tool…');
   let i = 0; setPhase(PHASES[0]);
@@ -435,14 +449,14 @@ async function run(loader) {
     await Promise.race([reading, new Promise((r) => setTimeout(r, READ_SOFT_CAP_MS))]);
     clearInterval(timer);
     const settled = aiState !== 'running';
-    const reveal = () => { renderResult(); setState('result'); if (settled) finalizeRead(myReveal); };
+    const reveal = () => { if (revealRun !== myReveal) return; renderResult(true); setState('result'); if (settled) finalizeRead(myReveal); };
     if (document.startViewTransition) document.startViewTransition(reveal); else reveal();
     if (!settled) {
       card.dataset.refining = 'on';   // a quiet "still settling" cue (subtle orb pulse)
       reading.then(() => {
         if (revealRun !== myReveal || card.dataset.state !== 'result') return;
         card.removeAttribute('data-refining');
-        const upd = () => { renderResult(); if (shell.dataset.dock === 'open') renderDrawer(); };
+        const upd = () => { renderResult(false); if (shell.dataset.dock === 'open') renderDrawer(); };   // settle-in is an in-place re-render — no entrance replay
         if (document.startViewTransition && aiState === 'done') document.startViewTransition(upd); else upd();
         finalizeRead(myReveal);
       });
@@ -476,7 +490,7 @@ function slugOf(r) { return r.meta.source === 'github' && r.meta.repoMeta.owner 
 // read" card is always present, even with no model available.
 function deterministicSummary(r) { return `Looks like ${PATTERN[r.pattern] || 'a small utility'}.`; }
 
-function renderResult() {
+function renderResult(fresh = false) {
   const view = computeView();
   const r = view.r;
   lastView = view;
@@ -492,7 +506,7 @@ function renderResult() {
   const nFiles = (r.meta && r.meta.fileCount) || 0;
   const summaryCard = `
     <div class="summary"${aiResult && aiResult.summary ? ' data-ai="1"' : ''}>
-      <div class="summary-head">${ICONS.sparkles}<span>Here’s what I read</span></div>
+      <div class="summary-head">${ICONS.eye}<span>What this looks like</span></div>
       <p class="summary-text">${esc(summaryText)}</p>
       <div class="summary-meta"><span class="slug">${esc(slug)}</span><span class="sdot" aria-hidden="true">·</span>${esc(sourceLabel(r.meta.source))}<span class="sdot" aria-hidden="true">·</span>${nFiles} file${nFiles === 1 ? '' : 's'}<span class="sdot" aria-hidden="true">·</span>looks like ${esc(pat)}</div>
     </div>`;
@@ -533,25 +547,30 @@ function renderResult() {
     </div>`;
   }
 
-  $('#result').dataset.outcome = outcome;
-  $('#result').innerHTML = `
+  // For a READY (Lane-1) outcome the reasons eyebrow and the placeholder all-clear
+  // tile are suppressed (hero → summary → see-the-full-check → CTA); developer/signoff
+  // keep the eyebrow + driving tiles.
+  const reasonsBlock = (outcome === 'ready') ? '' : `
+    <div class="reasons-eyebrow">${drivers.length ? 'Here’s what decided it' : 'The all-clear'}</div>
+    <div class="tiles">${tiles}</div>`;
+
+  const el = $('#result');
+  el.dataset.outcome = outcome;
+  el.dataset.fresh = fresh ? '1' : '';   // entrance animations run only on the initial reveal
+  el.innerHTML = `
     <div class="hero">
       <div class="orb" aria-hidden="true"></div>
       <div><h2 class="headline" id="verdict">${esc(v.headline)}</h2></div>
     </div>
-    <div class="story">${esc(v.story)}</div>
     ${summaryCard}
     ${seeFull}
-
-    <div class="reasons-eyebrow">${drivers.length && outcome !== 'ready' ? 'Here’s what decided it' : 'The all-clear'}</div>
-    <div class="tiles">${tiles}</div>
+    ${reasonsBlock}
     ${lightenPill}
 
     <div class="action">
-      <button class="ghost walk" id="walk"><span class="play">${ICONS.play}</span> Walk me through it</button>
-      <div class="spacer"></div>
       <button class="cta" id="cta">${esc(v.cta)}</button>
     </div>
+    <button class="ghost walk" id="walk"><span class="play">${ICONS.play}</span> Walk me through it</button>
     ${aiHeldBlock}`;
 
   announce(`${v.headline} ${v.story}`);
@@ -574,14 +593,18 @@ function renderResult() {
     if (!open) tile.classList.add('open');
   }));
   $('#result').querySelectorAll('.nudge').forEach((n) => n.addEventListener('click', () => {
-    setOverride(n.dataset.kind, n.dataset.flip); renderResult();
+    const kind = n.dataset.kind;
+    if (n.classList.contains('nudge-undo')) {
+      delete overrides[kind]; nudgedKinds.delete(kind); renderResult(); return;
+    }
+    nudgedKinds.add(kind); setOverride(kind, n.dataset.flip); renderResult();
   }));
 }
 
 // The privacy line — never names a model. Cloud-only: the code is sent to the
 // hosted reader to be read (and we don't over-claim what happens to it there).
 function privacyLine() {
-  return 'Read-only · your code is only ever read, never changed.';
+  return 'Read-only · read once to score it, never stored, never changed.';
 }
 
 // Map the judged read's suggestions onto the engine's override keys. The model's
@@ -656,11 +679,21 @@ async function copyHandoff(r, v) {
     `Verdict: ${v.headline} ${v.story}`,
     reasons.length ? `\nWhat decided it:\n${reasons.join('\n')}` : '',
     lighten.length ? `\nWhat would make it lighter:\n${lighten.join('\n')}` : '',
-    `\nFor: ${v.who}. (Automated triage indication — the AI Operations Lead makes the call.)`,
+    `\nFor: ${v.who}. (Automated triage indication — the AI Operations Lead makes the call.)`,   // title-case role
   ].filter(Boolean).join('\n');
-  try { await navigator.clipboard.writeText(note); } catch { /* clipboard may be blocked */ }
-  const b = $('#cta'); b.textContent = v.done; b.classList.add('done'); b.disabled = true;
-  announce(v.done);
+  const b = $('#cta');
+  try {
+    await navigator.clipboard.writeText(note);
+    b.textContent = v.done; b.classList.add('done'); b.disabled = true;
+    announce(v.done);
+    // Revert to the original CTA after a beat so the button stays usable.
+    setTimeout(() => { if (!b.isConnected) return; b.textContent = v.cta; b.classList.remove('done'); b.disabled = false; }, 2400);
+  } catch {
+    // Clipboard blocked — don't claim success; say so plainly and keep the button live.
+    b.textContent = 'Couldn’t copy — try again';
+    announce('Couldn’t copy — try again');
+    setTimeout(() => { if (!b.isConnected) return; b.textContent = v.cta; }, 2400);
+  }
 }
 
 // #2 + #3 — "Walk me through it": the decision path narrated step by step,
@@ -668,7 +701,7 @@ async function copyHandoff(r, v) {
 function walkSteps(r) {
   const v = VERDICT[OUTCOME[r.verdict.key]];
   const ds = r.assumptions.dataScope;
-  const steps = [{ k: 'start', t: `Here’s how ${slugOf(r)} got its designation — in two questions.` }];
+  const steps = [{ k: 'start', t: `Here’s how ${slugOf(r)} landed where it did — in two questions.` }];
   steps.push({ k: 'touches', t: ds === 'restricted'
     ? 'First: what does it work with? It touches client or fund data.'
     : 'First: what does it work with? Everyday data — nothing client or fund.' });
@@ -694,7 +727,7 @@ function startWalkthrough(r) {
   // Inert every region a Tab could reach behind the modal. The overlay is appended
   // to #work as a sibling of #card, so inerting #card (the verdict content) does not
   // inert the overlay itself. close() iterates this same set, so it stays symmetric.
-  const washed = document.querySelectorAll('.rail, .toolhead, .dock, .foot, #card, .sidebar, .bottompanel');
+  const washed = document.querySelectorAll('.skip, .rail, .toolhead, .dock, .foot, #card, .sidebar, .bottompanel');
   const ov = document.createElement('div');
   ov.className = 'walk-overlay';
   ov.dataset.outcome = OUTCOME[r.verdict.key];
@@ -712,8 +745,10 @@ function startWalkthrough(r) {
     currentWalkClose = null;
     if (trigger && trigger.focus) trigger.focus();
   };
-  const go = (n) => { idx = Math.max(0, Math.min(steps.length - 1, n)); render(); };
-  function render() {
+  const go = (n) => { idx = Math.max(0, Math.min(steps.length - 1, n)); render('step'); };
+  // `reason` decides where focus lands: a step change (next/prev/init) puts focus on the
+  // Next button; a voice toggle keeps focus on the voice button so it isn't stolen.
+  function render(reason) {
     if (!ov.isConnected) return;
     const s = steps[idx];
     ov.innerHTML = `
@@ -732,14 +767,19 @@ function startWalkthrough(r) {
       const a = b.dataset.act;
       if (a === 'next') { if (idx === steps.length - 1) close(); else go(idx + 1); }
       else if (a === 'prev') go(idx - 1);
-      else if (a === 'voice') { voice = !voice; if (!voice) stopSpeak(); else speak(s.t); render(); }
+      else if (a === 'voice') { voice = !voice; if (!voice) stopSpeak(); else speak(s.t); render('voice'); }
     }; });
     announce(s.t);                              // mirror each step to the live region
     speak(s.t);
-    (ov.querySelector('[data-act="next"]') || ov).focus();
+    // Focus Next on a step change (or initial render); on a voice toggle keep focus on
+    // the voice button so toggling it doesn't yank focus away.
+    const focusEl = reason === 'voice'
+      ? (ov.querySelector('[data-act="voice"]') || ov)
+      : (ov.querySelector('[data-act="next"]') || ov);
+    focusEl.focus();
   }
   currentWalkClose = close;
-  render();
+  render('init');
 }
 
 function nudgeFor(cond, r) {
@@ -747,6 +787,10 @@ function nudgeFor(cond, r) {
   if (!a) return '';
   const n = NUDGE[a.kind];
   if (!n) return '';
+  // The user already flipped this one via a nudge — offer a quiet inline undo instead.
+  if (nudgedKinds.has(a.kind) && overrides[a.kind] !== undefined) {
+    return `<button class="nudge nudge-undo" data-kind="${esc(a.kind)}">Changed — undo</button>`;
+  }
   if (r.assumptions.overridden[a.kind]) return '';
   if (!n.heavy.includes(String(a.value))) return '';
   return `<button class="nudge" data-kind="${esc(a.kind)}" data-flip="${esc(n.flipTo)}">${esc(n.text)} — change?</button>`;
@@ -771,7 +815,7 @@ const isNarrow = () => window.matchMedia('(max-width: 1100px)').matches;
 // Every region behind the dock when it falls back to a narrow-screen overlay —
 // the dock itself is excluded so it stays interactive. open/closeDrawer apply and
 // remove inert over the SAME set so focus can't escape (and isn't stranded).
-const dockBehind = () => document.querySelectorAll('.rail, .toolhead, .foot, #card, .sidebar, .bottompanel');
+const dockBehind = () => document.querySelectorAll('.skip, .rail, .toolhead, .foot, #card, .sidebar, .bottompanel');
 function openDrawer() {
   if (shell.dataset.dock !== 'open') { renderDrawer(); drawerReturnFocus = document.activeElement; }
   shell.dataset.dock = 'open';
@@ -807,11 +851,34 @@ function closeDrawer() {
 // scrim sits behind whichever overlay is open on narrow screens — close them
 $('#scrim')?.addEventListener('click', () => { closeDrawer(); setSidebar(false); });
 $('#drawer-close').addEventListener('click', closeDrawer);
+// Arrow-key navigation for the segmented radiogroups (assumption rows + theme seg).
+// One delegated handler: moving selection clicks the target button (reusing its existing
+// click handler to re-resolve the verdict / apply the theme) and moves focus to it.
+document.addEventListener('keydown', (e) => {
+  const group = e.target.closest && e.target.closest('.seg[role="radiogroup"]');
+  if (!group) return;
+  const btns = Array.from(group.querySelectorAll('button'));
+  if (!btns.length) return;
+  const cur = btns.indexOf(e.target);
+  if (cur < 0) return;
+  let next = -1;
+  if (e.key === 'ArrowRight' || e.key === 'ArrowDown') next = (cur + 1) % btns.length;
+  else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') next = (cur - 1 + btns.length) % btns.length;
+  else if (e.key === 'Home') next = 0;
+  else if (e.key === 'End') next = btns.length - 1;
+  else return;
+  e.preventDefault();
+  const target = btns[next];
+  target.click();      // reuses the existing click handler (re-resolve verdict / apply theme)
+  target.focus();
+});
+
 window.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if (setOverlay && !setOverlay.hidden) { closeSettings(); return; }
   if (currentWalkClose) { currentWalkClose(); return; }
   if (shell.dataset.dock === 'open') { closeDrawer(); return; }
+  if (shell.dataset.bottom === 'open') { setBottom(false); return; }
   if (shell.dataset.side === 'open') { setSidebar(false); return; }
 });
 
@@ -893,7 +960,7 @@ function renderDrawer() {
 // selected. Presented as the app's own read — no model attribution, no badges.
 // Changing a value is the user's call and re-resolves the verdict instantly.
 function assumeHTML(a) {
-  const opts = a.options.map((o) => `<button type="button" role="radio" aria-checked="${o.value === a.value ? 'true' : 'false'}" data-kind="${esc(a.kind)}" data-val="${esc(o.value)}" class="${o.value === a.value ? 'on' : ''}">${esc(o.label)}</button>`).join('');
+  const opts = a.options.map((o) => `<button type="button" role="radio" aria-checked="${o.value === a.value ? 'true' : 'false'}" tabindex="${o.value === a.value ? '0' : '-1'}" data-kind="${esc(a.kind)}" data-val="${esc(o.value)}" class="${o.value === a.value ? 'on' : ''}">${esc(o.label)}</button>`).join('');
   return `<div class="assume"><span class="q">${esc(QLABEL[a.kind] || 'Assumed')}</span><span class="seg" role="radiogroup" aria-label="${esc(QLABEL[a.kind] || 'Assumption')}">${opts}</span></div>`;
 }
 
@@ -904,7 +971,7 @@ function reset() {
   closeDrawer();
   if (aiAbort) aiAbort.abort();
   aiRunId++; aiState = 'off'; aiResult = null; aiOverrides = {};
-  corpus = null; cachedFacts = null; overrides = {}; lastResult = null;
+  corpus = null; cachedFacts = null; overrides = {}; nudgedKinds.clear(); lastResult = null;
   setState('input');
   resetFooter();
   urlInput.value = ''; $('#analyze').disabled = true;
@@ -970,6 +1037,7 @@ function applyTheme(mode) {
     const on = b.dataset.theme === mode;
     b.classList.toggle('on', on);
     b.setAttribute('aria-checked', String(on));
+    b.tabIndex = on ? 0 : -1;   // roving tabindex — only the checked option is tabbable
   });
 }
 
@@ -1004,6 +1072,7 @@ let aiRechecking = false;     // transient: re-pinging the reader for a live sta
 let authBusy = false;         // transient: a sign-in / sign-up request is in flight
 let authMsg = null;           // {kind:'error'|'ok', text} feedback under the form
 let authEmail = '';           // preserve the typed email across a re-render
+let authPass = '';            // preserve the typed password across a re-render (cleared once signed in)
 
 function buildSettings() {
   const ov = document.createElement('div');
@@ -1022,7 +1091,7 @@ function buildSettings() {
       </header>
       <div class="set-main">
         <nav class="set-nav" aria-label="Settings sections">${SETTINGS_SECTIONS.map((s) => `
-          <button class="set-navitem" type="button" data-sec="${s.id}">
+          <button class="set-navitem" type="button" data-sec="${s.id}" aria-label="${esc(s.label)}">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${SET_ICON[s.id]}</svg>
             <span>${esc(s.label)}</span>
           </button>`).join('')}
@@ -1043,13 +1112,29 @@ function buildSettings() {
     // carries data-theme when a theme is locked, swallowing every other click here
     const themeBtn = e.target.closest('button[data-theme]');
     if (themeBtn) { applyTheme(themeBtn.dataset.theme); return; }
+    // show/hide password toggle (Account pane)
+    const eyeBtn = e.target.closest('.set-eye');
+    if (eyeBtn) {
+      const inp = eyeBtn.closest('.set-pass')?.querySelector('input');
+      if (inp) {
+        const show = inp.type === 'password';
+        inp.type = show ? 'text' : 'password';
+        eyeBtn.setAttribute('aria-pressed', String(show));
+        eyeBtn.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+      }
+      return;
+    }
     const act = e.target.closest('[data-act]')?.dataset.act;
     if (act === 'clear-recents') { clearAll(); }
     else if (act === 'toggle-save') { store.set('save', !savingEnabled()); renderSettingsBody(); }
     else if (act === 'open-playbook') { closeSettings(); setBottom(true); }
     else if (act === 'recheck-ai') recheckAI();
-    else if (act === 'sign-in' || act === 'sign-up') doAuth(act);
+    else if (act === 'sign-up') doAuth('sign-up');   // sign-in goes through the form's submit handler
     else if (act === 'sign-out') doSignOut();
+  });
+  // The sign-in form: Enter (or the type=submit button) signs in — and lets password managers fill it.
+  ov.querySelector('.set-content').addEventListener('submit', (e) => {
+    if (e.target && e.target.id === 'auth-form') { e.preventDefault(); doAuth('sign-in'); }
   });
   return ov;
 }
@@ -1059,6 +1144,7 @@ function openSettings() {
   setReturnFocus = document.activeElement;
   setOverlay.hidden = false;
   shell.setAttribute('inert', '');     // park the app behind the modal
+  document.querySelector('.skip')?.setAttribute('inert', '');   // the skip-link lives outside #shell
   renderSettingsBody();
   if (setActive === 'intelligence') recheckAI();   // confirm the reader is live, this moment
   requestAnimationFrame(() => setOverlay.querySelector(`.set-navitem[data-sec="${setActive}"]`)?.focus());
@@ -1067,6 +1153,7 @@ function closeSettings() {
   if (!setOverlay || setOverlay.hidden) return;
   setOverlay.hidden = true;
   shell.removeAttribute('inert');
+  document.querySelector('.skip')?.removeAttribute('inert');
   if (setReturnFocus && setReturnFocus.focus) setReturnFocus.focus();
 }
 function selectSettings(id) {
@@ -1103,7 +1190,7 @@ function renderSetAccount() {
     return `
     <div class="set-pane">
       <h3 class="set-h">Account</h3>
-      <p class="set-sub">You're signed in. Your check history and saved files sync to your account.</p>
+      <p class="set-sub">You’re signed in. Your check history and saved files sync to your account.</p>
       <div class="set-card">
         <div class="set-row">
           <div class="set-rl">
@@ -1124,20 +1211,23 @@ function renderSetAccount() {
     <div class="set-pane">
       <h3 class="set-h">Account</h3>
       <p class="set-sub">Optional. Sign in to sync your history and saved files across devices. Without an account, everything stays on this device.</p>
-      <div class="set-card">
+      <form class="set-card" id="auth-form">
         <div class="set-field">
           <label class="set-rt" for="auth-email">Email</label>
           <input class="set-input" type="email" id="auth-email" autocomplete="email" placeholder="you@example.com" value="${esc(authEmail)}" ${authBusy ? 'disabled' : ''} />
         </div>
         <div class="set-field">
           <label class="set-rt" for="auth-pass">Password</label>
-          <input class="set-input" type="password" id="auth-pass" autocomplete="current-password" placeholder="••••••••" ${authBusy ? 'disabled' : ''} />
+          <div class="set-pass">
+            <input class="set-input" type="password" id="auth-pass" autocomplete="current-password" placeholder="••••••••" value="${esc(authPass)}" ${authBusy ? 'disabled' : ''} />
+            <button class="set-eye" type="button" aria-pressed="false" aria-label="Show password">${ICONS.eye}</button>
+          </div>
         </div>
         <div class="set-row set-row-foot set-row-auth">
-          <button class="set-btn primary" type="button" data-act="sign-in" ${authBusy ? 'disabled' : ''}>${authBusy ? 'Working…' : 'Sign in'}</button>
+          <button class="set-btn primary" type="submit" data-act="sign-in" ${authBusy ? 'disabled' : ''}>${authBusy ? 'Working…' : 'Sign in'}</button>
           <button class="set-btn" type="button" data-act="sign-up" ${authBusy ? 'disabled' : ''}>Create account</button>
         </div>
-      </div>
+      </form>
       ${msg}
       <p class="set-foot">Your code is still only ever read, never changed. Saving syncs your file and its result to your private account — nothing is shared with anyone else.</p>
     </div>`;
@@ -1151,6 +1241,7 @@ async function doAuth(kind) {
   const email = (emailEl?.value || '').trim();
   const password = passEl?.value || '';
   authEmail = email;
+  authPass = password;   // preserve across the re-render so a failed sign-in doesn't wipe it
   if (!email || !password) { authMsg = { kind: 'error', text: 'Enter an email and password.' }; renderSettingsBody(); return; }
   authBusy = true; authMsg = null; renderSettingsBody();
   try {
@@ -1164,7 +1255,7 @@ async function doAuth(kind) {
     authMsg = { kind: 'error', text: friendlyAuthError(e) };
   }
   authBusy = false;
-  if (isSignedIn()) { authEmail = ''; authMsg = null; }
+  if (isSignedIn()) { authEmail = ''; authPass = ''; authMsg = null; }
   syncAvatar();
   renderSettingsBody();
   await loadLibrary();          // pull this account's saved checks (or fall back to local)
@@ -1184,9 +1275,9 @@ function friendlyAuthError(e) {
   const m = String(e?.message || e || '').toLowerCase();
   if (e?.status === 429 || m.includes('rate limit') || m.includes('too many')) return 'Too many attempts — wait a minute and try again.';
   if (m.includes('not confirmed')) return 'Check your email to confirm this account, then sign in.';
-  if (m.includes('invalid login') || m.includes('invalid credentials')) return 'That email and password don\'t match.';
+  if (m.includes('invalid login') || m.includes('invalid credentials')) return 'That email and password don’t match.';
   if (m.includes('already registered') || m.includes('already exists')) return 'That email already has an account — try signing in.';
-  if (m.includes('invalid') && m.includes('email')) return 'That doesn\'t look like a valid email.';
+  if (m.includes('invalid') && m.includes('email')) return 'That doesn’t look like a valid email.';
   if (m.includes('password')) return 'Password must be at least 6 characters.';
   return e?.message || 'Something went wrong. Try again.';
 }
@@ -1286,7 +1377,7 @@ function renderSetAI() {
   return `
     <div class="set-pane">
       <h3 class="set-h">Intelligence</h3>
-      <p class="set-sub">Lane reads your code with a small AI model. Here's what it's using and whether it's live right now — the built-in rules always make the final call.</p>
+      <p class="set-sub">Lane reads your code with a small AI model. Here’s what it’s using and whether it’s live right now — the built-in rules always make the final call.</p>
       <div class="set-card">
         <div class="set-row">
           <div class="set-rl">
@@ -1312,7 +1403,7 @@ function renderSetAI() {
           <button class="set-btn" type="button" data-act="recheck-ai" ${aiRechecking ? 'disabled' : ''}>${aiRechecking ? 'Checking…' : 'Check again'}</button>
         </div>
       </div>
-      <p class="set-foot">However it reads, the built-in rules make the call. The model only fills in judgment the code can't show on its own — and it can add caution, never remove it.</p>
+      <p class="set-foot">However it reads, the built-in rules make the call. The model only fills in judgment the code can’t show on its own — and it can add caution, never remove it.</p>
     </div>`;
 }
 
@@ -1387,7 +1478,7 @@ function renderSetAbout() {
           <svg class="set-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
         </button>
       </div>
-      <p class="set-foot">A quick read, not the final word — your AI operations lead makes the hosting call.</p>
+      <p class="set-foot">A quick read, not the final word — your AI Operations Lead makes the hosting call.</p>
     </div>`;
 }
 
@@ -1397,7 +1488,7 @@ function updateFooter(r) {
   shell.dataset.outcome = OUTCOME[r.verdict.key];
   const fv = $('#foot-verdict');
   fv.dataset.kind = 'verdict';
-  fv.innerHTML = `<span class="v-dot"></span><span class="foot-txt">${esc(FOOT_VERDICT[r.verdict.key] || '')}</span>`;
+  fv.innerHTML = `<span class="v-dot"></span>`;   // colour only — no verdict words (FOOT_VERDICT still used by the held-read block)
   const conf = r.confidence || { level: 'high', reasons: [] };
   $('#foot-conf').textContent = conf.level !== 'high' ? `Lower confidence — ${conf.reasons[0] || 'limited code to read'}` : '';
 }
@@ -1545,7 +1636,7 @@ function renderSidebar() {
     </div>`;
     return;
   }
-  host.innerHTML = list.map((a) => `<div class="recent" role="button" tabindex="0" data-id="${esc(a.id)}" data-v="${esc(a.verdict || '')}" title="Re-open this check">
+  host.innerHTML = list.map((a) => `<div class="recent" role="button" tabindex="0" data-id="${esc(a.id)}" data-v="${esc(a.verdict || '')}" title="Re-open this check" aria-label="${esc('Re-open ' + (a.name || 'check') + ' — ' + (RECENT_LABEL[a.verdict] || 'check'))}">
       <span class="rdot" aria-hidden="true"></span>
       <span class="rtx"><span class="rslug">${esc(a.name || 'Check')}</span><span class="rmeta">${esc(a.verdict ? (RECENT_LABEL[a.verdict] || '') : sourceLabel(a.source))}${a.createdAt ? ` · ${esc(relTime(a.createdAt))}` : ''}</span></span>
     </div>`).join('')
