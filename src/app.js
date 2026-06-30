@@ -2,7 +2,7 @@
 // The engine (src/engine) decides; this layer translates the decision into one
 // glanceable, jargon-free answer and tucks the technical audit into a drawer.
 
-import { extractFacts, hydrateFacts, resolve } from './engine/classify.js';
+import { extractFacts, hydrateFacts, resolve, analyze } from './engine/classify.js';
 import {
   parseGitHubUrl, loadFromGitHub, loadFromFileList, loadFromZip, loadFromPaste,
   loadFromPastes, guessPasteName,
@@ -34,6 +34,7 @@ let corpus = null;
 let cachedFacts = null;   // assumption-independent facts; scanned once, reused per what-if toggle
 let overrides = {};
 let nudgedKinds = new Set();   // assumption kinds the user flipped via a nudge — lets us offer an inline undo
+let caExpand = false;          // "Confirm the assumptions" chip stays open across re-renders once the user opens/uses it
 let lastResult = null;
 let currentWalkClose = null;  // teardown handle for an active walkthrough overlay
 
@@ -122,6 +123,7 @@ const PATTERN = {
 };
 
 const WOULDBE = { lane1: 'the light path', lane2: 'developer-built', approve: 'a sign-off' };
+const LANE_RANK = { lane1: 0, lane2: 1, approve: 2 };
 const ANNOT = { host: 'custom server', c53: 'record update', c55: 'outside AI call', c56: 'outside-the-company call', c57: 'local data save', c54: 'judgment call', c52: 'client/fund data', c51: 'reliance on others' };
 
 // Pull a few real lines around the deciding line from the loaded source.
@@ -527,9 +529,57 @@ function renderResult(fresh = false) {
   // One quiet way into the full check. Provenance counts are gone — the read is
   // presented as a single answer — but a low-confidence read still says so.
   const conf = r.confidence || { level: 'high', reasons: [] };
-  const confNote = conf.level !== 'high'
-    ? `<span class="t-conf t-conf-${conf.level}" title="${esc(conf.reasons.join(' '))}">${conf.level} confidence</span><span class="t-sep">·</span>` : '';
-  const seeFull = `<button class="trust" id="trust-line" aria-label="See the full check">${confNote}<span class="t-link">see the full check</span></button>`;
+  // Confidence is surfaced once, as the actionable .conf-nudge line on the card (and an
+  // ambient "Lower confidence" in the footer) — so the trust line stays just the entry point.
+  const seeFull = `<button class="trust" id="trust-line" aria-label="See the full check"><span class="t-link">see the full check</span></button>`;
+
+  // Confidence-aware "firm this up" nudge — when the read isn't high-confidence,
+  // promote the most actionable reason to a single calm line on the card (muted
+  // graphite, never an alarm). The trust-line note and dock confBlock stay as-is.
+  const confNudge = (conf.level !== 'high' && conf.reasons[0])
+    ? `<p class="conf-nudge">${esc(conf.reasons[0])}</p>` : '';
+
+  // "Why not lighter" — one calm teaser sentence for non-ready outcomes. We surface
+  // the SINGLE biggest improvement (smallest LANE_RANK[wouldBe]; first on a tie) and
+  // only when that change would actually reach a lighter lane than the current verdict.
+  // The full ordered list lives in the dock (lighten-checklist); this is just the hook.
+  let whyLighter = '';
+  if (outcome !== 'ready' && lighten.length) {
+    const cur = LANE_RANK[r.verdict.key] ?? 99;
+    const best = lighten
+      .filter((l) => (LANE_RANK[l.wouldBe] ?? 99) < cur)
+      .sort((a, b) => (LANE_RANK[a.wouldBe] ?? 99) - (LANE_RANK[b.wouldBe] ?? 99))[0];
+    if (best) {
+      whyLighter = `<p class="why-lighter">One step from ${esc(WOULDBE[best.wouldBe] || 'a lighter read')} — ${esc(best.text)}</p>`;
+    }
+  }
+
+  // "Confirm the assumptions" — a calm, collapsed-by-default chip. When the read
+  // rested on judgments code couldn't prove (r.unknowns), expanding it reveals the
+  // SAME segmented controls used in the dock for exactly those un-inferable kinds.
+  // Framed as the app's read you can confirm — no model attribution. Changing a
+  // value re-resolves the verdict instantly (the dock's setOverride + renderResult
+  // path). Renders nothing when everything was code-certain.
+  // Surface the un-inferable judgments the USER hasn't manually set yet (the app's
+  // own read — which may be AI-derived — is still confirmable). Keyed to the user's
+  // `overrides`, NOT r.assumptions.overridden, which is also true for the silent AI fill.
+  const confirmRows = r.conditions.filter((c) => c.assumption && overrides[c.assumption.kind] === undefined);
+  let confirmBlock = '';
+  if (confirmRows.length) {
+    const n = confirmRows.length;
+    const open = caExpand;
+    confirmBlock = `
+    <div class="confirm-assume${open ? ' open' : ''}" id="confirm-assume">
+      <button class="ca-head" id="ca-head" type="button" aria-expanded="${open}" aria-controls="ca-body">
+        <span class="ca-ic">${ICONS.eye}</span>
+        <span class="ca-label">${n} thing${n === 1 ? '' : 's'} we had to assume — confirm to firm this up</span>
+        <span class="ca-chev" aria-hidden="true">${ICONS.chev}</span>
+      </button>
+      <div class="ca-body" id="ca-body"${open ? '' : ' hidden'}>
+        ${confirmRows.map((c) => assumeHTML(c.assumption)).join('')}
+      </div>
+    </div>`;
+  }
 
   // FIX-25 — when an automated read judged the tool could be LIGHTER than the
   // code-certain floor, we HOLD it (never auto-apply) and surface it here as a
@@ -563,12 +613,16 @@ function renderResult(fresh = false) {
       <div><h2 class="headline" id="verdict">${esc(v.headline)}</h2></div>
     </div>
     ${summaryCard}
+    ${confNudge}
     ${seeFull}
+    ${whyLighter}
+    ${confirmBlock}
     ${reasonsBlock}
     ${lightenPill}
 
     <div class="action">
       <button class="cta" id="cta">${esc(v.cta)}</button>
+      <button class="ghost record" id="record" type="button" title="Download a self-contained hand-off record"><span class="dl">${ICONS.download}</span> Download record</button>
     </div>
     <button class="ghost walk" id="walk"><span class="play">${ICONS.play}</span> Walk me through it</button>
     ${aiHeldBlock}`;
@@ -579,6 +633,7 @@ function renderResult(fresh = false) {
 
   $('#trust-line').addEventListener('click', openDrawer);
   $('#cta').addEventListener('click', () => copyHandoff(r, v));
+  $('#record').addEventListener('click', () => downloadRecord(r, v));
   $('#walk').addEventListener('click', () => startWalkthrough(r));
   const lb = $('#lighten-btn'); if (lb) lb.addEventListener('click', openLighten);
   // FIX-25 — the held lighter read only applies on this explicit click; merging
@@ -586,6 +641,26 @@ function renderResult(fresh = false) {
   // assumption toggles use (setOverride), so the clamp now sees a human choice.
   const ah = $('#ai-apply');
   if (ah) ah.addEventListener('click', () => { Object.assign(overrides, aiOverrides); renderResult(); });
+  // "Confirm the assumptions" — expand/collapse the chip, and wire its seg buttons
+  // to the SAME setOverride + renderResult path the dock uses (arrow-key handling is
+  // already covered by the global .seg[role=radiogroup] keydown handler). On a value
+  // change we re-render but keep the chip expanded so the user sees the read settle.
+  const caHead = $('#ca-head');
+  if (caHead) {
+    caHead.addEventListener('click', () => {
+      const box = $('#confirm-assume');
+      const open = box.classList.toggle('open');
+      caExpand = open;
+      caHead.setAttribute('aria-expanded', String(open));
+      $('#ca-body').hidden = !open;
+    });
+    $('#confirm-assume').querySelectorAll('.seg button').forEach((b) => b.addEventListener('click', () => {
+      setOverride(b.dataset.kind, b.dataset.val);
+      caExpand = true;   // a confirmed value re-renders the card; keep this chip open
+      renderResult();
+    }));
+  }
+
   $('#result').querySelectorAll('.show-where').forEach((b) => b.addEventListener('click', () => {
     const tile = b.closest('.tile');
     const open = tile.classList.contains('open');
@@ -666,14 +741,48 @@ function driverTile(c, i, r) {
   </div>`;
 }
 
-// CTA copies a plain-language hand-off note to the clipboard (no backend to post to).
-async function copyHandoff(r, v) {
-  const reasons = r.conditions.filter((c) => c.driving).map((c) => {
+// Shared hand-off assembly — the driving reasons (one bullet each) and the
+// "what would make it lighter" list. Reused by the clipboard note (copyHandoff)
+// and the downloadable record (buildRecord) so the two never drift.
+// withEvidence appends each driving condition's first evidence as path:line.
+function handoffReasons(r, withEvidence = false) {
+  return r.conditions.filter((c) => c.driving).map((c) => {
     const def = COND[c.id] || {};
     const copy = c.id === 'c51' ? relianceDisplay(c.assumption && c.assumption.value).copy : (def.fail || c.sentence);
-    return '• ' + copy;
+    let line = '• ' + copy;
+    if (withEvidence) {
+      const e = (c.evidence || [])[0];
+      if (e && e.path) line += `\n    ${e.path}${e.line ? ':' + e.line : ''}`;
+    }
+    return line;
   });
-  const lighten = (r.lighten || []).map((l) => '• ' + l.text + (l.wouldBe ? `  (→ ${WOULDBE[l.wouldBe] || 'lighter'})` : ''));
+}
+function handoffLighten(r) {
+  return (r.lighten || []).map((l) => '• ' + l.text + (l.wouldBe ? `  (→ ${WOULDBE[l.wouldBe] || 'lighter'})` : ''));
+}
+
+// Resolve an assumption kind to its human-readable selected label, reading the
+// option labels the engine attached to the matching condition (falls back to the
+// raw value). Flags only values the USER changed by hand (the module `overrides`),
+// not the silent AI fill (which also sets r.assumptions.overridden).
+function assumptionLine(r, kind, qlabel) {
+  const val = r.assumptions[kind];
+  let label = val;
+  const cond = (r.conditions || []).find((c) => c.assumption && c.assumption.kind === kind);
+  if (cond) {
+    const opt = (cond.assumption.options || []).find((o) => o.value === cond.assumption.value);
+    if (opt) label = opt.label;
+  }
+  const changed = overrides[kind] !== undefined;
+  // Some kinds (e.g. humanReview) aren't surfaced on this result — skip rather than print "undefined".
+  if (label === undefined || label === null || label === '') return null;
+  return `• ${qlabel}: ${label}${changed ? '  [you changed this]' : ''}`;
+}
+
+// CTA copies a plain-language hand-off note to the clipboard (no backend to post to).
+async function copyHandoff(r, v) {
+  const reasons = handoffReasons(r);
+  const lighten = handoffLighten(r);
   const note = [
     `Lane check — ${slugOf(r)}`,
     `Verdict: ${v.headline} ${v.story}`,
@@ -696,6 +805,60 @@ async function copyHandoff(r, v) {
   }
 }
 
+// Downloadable committee hand-off record — a self-contained, human-readable .txt
+// that builds on the same assembly the clipboard note uses, plus the resolved
+// assumptions (flagging any the user changed), the confidence line and evidence
+// pointers. It states plainly that this is an automated triage indication and the
+// AI Operations Lead makes the call. No AI/model attribution beyond that role.
+function buildRecord(r, v) {
+  const dateStr = new Date().toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const reasons = handoffReasons(r, true);          // driving reasons + path:line evidence
+  const lighten = handoffLighten(r);
+  const conf = r.confidence || { level: 'high', reasons: [] };
+  const assumptions = [
+    assumptionLine(r, 'dataScope', 'Data'),
+    assumptionLine(r, 'reliance', 'Relied on by'),
+    assumptionLine(r, 'writeAuthority', 'Records it changes'),
+    assumptionLine(r, 'humanReview', 'Output review'),
+  ].filter(Boolean);
+  const rule = '─'.repeat(56);
+  return [
+    `LANE CHECK — COMMITTEE HAND-OFF RECORD`,
+    `${slugOf(r)}`,
+    `Generated ${dateStr}`,
+    rule,
+    `VERDICT: ${v.headline}`,
+    v.story,
+    reasons.length ? `\nWHAT DECIDED IT\n${reasons.join('\n')}` : '',
+    assumptions.length ? `\nWHAT WE ASSUMED\n${assumptions.join('\n')}` : '',
+    `\nCONFIDENCE\n• ${conf.level} confidence${conf.reasons[0] ? ' — ' + conf.reasons[0] : ''}`,
+    lighten.length ? `\nWHAT WOULD MAKE IT LIGHTER\n${lighten.join('\n')}` : '',
+    rule,
+    `This is an automated triage indication, not a decision. The AI Operations`,
+    `Lead makes the call. For: ${v.who}.`,
+  ].filter(Boolean).join('\n');
+}
+
+// "Download record" — assembles buildRecord and saves it as a .txt via the same
+// Blob + <a download> pattern downloadAsset uses (no backend).
+function downloadRecord(r, v) {
+  const text = buildRecord(r, v);
+  const base = String(slugOf(r) || 'lane-check').replace(/[^\w.-]+/g, '_').replace(/^_+|_+$/g, '') || 'lane-check';
+  const blob = new Blob([text], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a'); link.href = url; link.download = `${base}-handoff.txt`;
+  document.body.appendChild(link); link.click(); link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  const btn = $('#record');
+  if (btn) {
+    const orig = btn.dataset.label || btn.textContent;
+    btn.dataset.label = orig;
+    btn.textContent = 'Record saved ✓';
+    announce('Record saved');
+    setTimeout(() => { if (btn.isConnected) btn.textContent = orig; }, 2400);
+  }
+}
+
 // #2 + #3 — "Walk me through it": the decision path narrated step by step,
 // optionally read aloud, so the user can sit back and just follow the logic.
 function walkSteps(r) {
@@ -708,12 +871,16 @@ function walkSteps(r) {
   if (r.verdict.key === 'lane1') {
     steps.push({ k: 'gate', t: 'Second: does it change records or rely on unreviewed output? No — it only reads or formats, stays inside the company, and you review what it produces.' });
   } else {
-    const parts = r.conditions.filter((c) => c.driving).slice(0, 2).map((c) => {
+    const drivers = r.conditions.filter((c) => c.driving).slice(0, 2);
+    const parts = drivers.map((c) => {
       const copy = c.id === 'c51' ? relianceDisplay(c.assumption && c.assumption.value).copy : (COND[c.id]?.fail || c.sentence);
       const label = splitCopy(copy)[0];
       return label.charAt(0).toLowerCase() + label.slice(1); // lowercase first letter, keep "AI"
     });
-    steps.push({ k: 'gate', t: `Second: does it cross a line that needs more care? Yes — ${parts.join(', and ')}.` });
+    // Pin the first driving condition's first evidence to this step so the overlay
+    // can show the exact deciding line beneath the narration (see render()).
+    const ev = drivers.map((c) => (c.evidence || [])[0] && { ...c.evidence[0], condId: c.id }).find(Boolean) || null;
+    steps.push({ k: 'gate', t: `Second: does it cross a line that needs more care? Yes — ${parts.join(', and ')}.`, ev });
   }
   steps.push({ k: 'land', t: `So it lands here: ${v.headline} ${v.story}` });
   return steps;
@@ -751,11 +918,21 @@ function startWalkthrough(r) {
   function render(reason) {
     if (!ov.isConnected) return;
     const s = steps[idx];
+    // Evidence-pinned step: render a read-only spotlight of the deciding line,
+    // reusing the SAME .code/.cl/.hot markup driverTile uses. Steps without
+    // evidence (intro, gate-with-no-evidence, the landing step) fall back to text.
+    const ctx = s.ev ? codeContext(s.ev.path, s.ev.line) : null;
+    const codeHTML = ctx ? `
+      <div class="walk-code">
+        <div class="code">${ctx.map((l) => `<div class="cl${l.hot ? ' hot' : ''}"><span class="n">${l.n}</span><span class="t">${esc(l.text) || ' '}</span></div>`).join('')}</div>
+        ${s.ev.line ? `<div class="walk-loc"><span class="loc">${esc(s.ev.path)}:${s.ev.line}</span></div>` : ''}
+      </div>` : '';
     ov.innerHTML = `
       <button class="walk-close" aria-label="Close walkthrough">✕</button>
       <div class="walk-card">
         <div class="walk-dots" aria-hidden="true">${steps.map((_, j) => `<span class="${j < idx ? 'past' : j === idx ? 'on' : ''}"></span>`).join('')}</div>
         <div class="walk-text">${esc(s.t)}</div>
+        ${codeHTML}
         <div class="walk-ctrl">
           <button class="ghost sm" data-act="prev" ${idx === 0 ? 'disabled' : ''}>Back</button>
           <button class="voice ${voice ? 'on' : ''}" data-act="voice" aria-pressed="${voice}" aria-label="${voice ? 'Stop reading aloud' : 'Read aloud'}">${voice ? ICONS.volume : ICONS.mute}</button>
@@ -915,7 +1092,7 @@ function renderDrawer() {
         <div class="cl">${esc(label)}</div>
         ${desc ? `<div class="cd">${esc(desc)}</div>` : ''}
         ${assume}
-        <div class="tech"><div class="meta-line">${esc(c.ref)} · ${ev ? `${c.evidence.length} place(s) in code` : 'no code evidence'}</div></div>
+        <div class="tech"><div class="meta-line"><button type="button" class="ref-link" data-ref="${esc(c.ref)}" title="Open the reference for ${esc(c.ref)}">${esc(c.ref)}</button> · ${ev ? `${c.evidence.length} place(s) in code` : 'no code evidence'}</div></div>
         ${ev}
       </div>
       <span class="state ${stClass}">${esc(stText)}</span>
@@ -927,16 +1104,27 @@ function renderDrawer() {
   const confBlock = conf.level !== 'high'
     ? `<div class="cert-block"><span class="cert-conf cert-conf-${conf.level}">${conf.level} confidence — ${esc(conf.reasons[0] || '')}</span></div>` : '';
   const lighten = (r.lighten || []);
+  const lightenSorted = lighten
+    .map((l, i) => [l, i])
+    .sort((a, b) => ((LANE_RANK[a[0].wouldBe] ?? 99) - (LANE_RANK[b[0].wouldBe] ?? 99)) || (a[1] - b[1]))
+    .map((x) => x[0]);
   const lightenBlock = lighten.length ? `
-    <div class="lighten-block">
+    <ol class="lighten-block lb-list">
       <div class="lb-head"><span class="bolt">${ICONS.bolt}</span> What would make it lighter</div>
-      ${lighten.map((l) => `<div class="lb-item">${esc(l.text)} ${l.wouldBe ? `<span class="lb-would">→ ${esc(WOULDBE[l.wouldBe] || 'lighter')}</span>` : ''}</div>`).join('')}
-    </div>` : '';
+      ${lightenSorted.map((l, i) => `<li class="lb-item"><span class="lb-num">${i + 1}.</span> ${esc(l.text)} ${l.wouldBe ? `<span class="lb-would">→ ${esc(WOULDBE[l.wouldBe] || 'lighter')}</span>` : ''}</li>`).join('')}
+    </ol>` : '';
+  // Count only the user's own manual changes (module `overrides`) — NOT r.assumptions.
+  // overridden, which is also true for the silent AI fill (that's not "you changed it").
+  const changed = Object.keys(overrides).length;
+  const provBlock = changed > 0
+    ? `<div class="provenance">You changed ${changed} of the app${"’"}s read${changed === 1 ? '' : 's'}.</div>`
+    : '';
   $('#drawer-body').innerHTML = `
     <p style="font-size:13px;color:var(--muted);line-height:1.5;margin:10px 0 6px">
       ${esc(v.headline)} Every check below in plain words — adjust anything we had to assume and the read updates.
     </p>
     ${confBlock}
+    ${provBlock}
     ${lightenBlock}
     ${rows}
     <button class="tech-toggle" id="tech-toggle">Show technical detail</button>
@@ -947,6 +1135,10 @@ function renderDrawer() {
   $('#drawer-body').querySelectorAll('.seg button').forEach((b) => b.addEventListener('click', () => {
     setOverride(b.dataset.kind, b.dataset.val); renderResult();   // renderResult refreshes the open dock
   }));
+  // §-ref deep-link: each condition's ref opens the bottom Lanes reference and
+  // scrolls to + briefly highlights the matching clause. If no row matches, the
+  // drawer still opens (the reference is the destination, not a dead end).
+  $('#drawer-body').querySelectorAll('.ref-link').forEach((b) => b.addEventListener('click', () => openReference(b.dataset.ref)));
   let techOn = false;
   $('#tech-toggle').addEventListener('click', () => {
     techOn = !techOn;
@@ -971,7 +1163,7 @@ function reset() {
   closeDrawer();
   if (aiAbort) aiAbort.abort();
   aiRunId++; aiState = 'off'; aiResult = null; aiOverrides = {};
-  corpus = null; cachedFacts = null; overrides = {}; nudgedKinds.clear(); lastResult = null;
+  corpus = null; cachedFacts = null; overrides = {}; nudgedKinds.clear(); caExpand = false; lastResult = null;
   setState('input');
   resetFooter();
   urlInput.value = ''; $('#analyze').disabled = true;
@@ -1490,7 +1682,7 @@ function updateFooter(r) {
   fv.dataset.kind = 'verdict';
   fv.innerHTML = `<span class="v-dot"></span>`;   // colour only — no verdict words (FOOT_VERDICT still used by the held-read block)
   const conf = r.confidence || { level: 'high', reasons: [] };
-  $('#foot-conf').textContent = conf.level !== 'high' ? `Lower confidence — ${conf.reasons[0] || 'limited code to read'}` : '';
+  $('#foot-conf').textContent = conf.level !== 'high' ? 'Lower confidence' : '';
 }
 function resetFooter() {
   shell.removeAttribute('data-outcome');
@@ -1507,6 +1699,11 @@ function resetFooter() {
 // sidebar and grid render synchronously; loadLibrary() refreshes it.
 let libraryCache = [];
 let skipNextSave = false;   // set while re-opening a saved check, so it isn't re-saved
+// Compare mode: a Library toggle that lets the user pick exactly two saved checks and
+// see the per-condition delta between them. `compareMode` gates the selectable UI;
+// `comparePicks` holds the (≤2) selected asset ids in click order (A then B).
+let compareMode = false;
+let comparePicks = [];
 
 async function loadLibrary() {
   try { libraryCache = await listAssets(); } catch { libraryCache = []; }
@@ -1611,6 +1808,32 @@ function setBottom(open) {
   renderRail();   // keep the rail Docs toggle's pressed state in sync
 }
 
+// Deep-link from a dock condition's §-ref to its clause in the bottom reference:
+// open the drawer, then scroll the matching row into view and pulse a transient
+// highlight. No matching row -> just open the drawer (still the right destination).
+let refFlashTimer = null;
+function openReference(ref) {
+  setBottom(true);
+  const row = ref && document.querySelector(`#checks-ref .check-ref[data-ref="${(window.CSS && CSS.escape) ? CSS.escape(ref) : ref}"]`);
+  if (!row) return;
+  const scroller = document.querySelector('#bottompanel .bottom-body');
+  // Let the drawer finish opening + laying out before we measure + scroll the reference
+  // body directly (scrollIntoView targets the wrong ancestor in this grid, and rAF fires
+  // before the just-opened panel has its final height).
+  setTimeout(() => {
+    if (scroller) {
+      const sRect = scroller.getBoundingClientRect();
+      const rRect = row.getBoundingClientRect();
+      scroller.scrollTop += (rRect.top - sRect.top) - (scroller.clientHeight / 2) + (rRect.height / 2);
+    } else { try { row.scrollIntoView({ block: 'center' }); } catch {} }
+    document.querySelectorAll('#checks-ref .check-ref.flash').forEach((r) => r.classList.remove('flash'));
+    void row.offsetWidth;   // reflow so re-flashing the same row replays the animation
+    row.classList.add('flash');
+    if (refFlashTimer) clearTimeout(refFlashTimer);
+    refFlashTimer = setTimeout(() => row.classList.remove('flash'), 1800);
+  }, 150);
+}
+
 const RECENT_LABEL = { lane1: 'Ready to host', lane2: 'Hand to a developer', approve: 'Needs a sign-off' };
 const VERDICT_SHORT = { lane1: 'Lane 1', lane2: 'Lane 2', approve: 'Approve' };
 const SOURCE_LABEL = { github: 'GitHub', upload: 'Upload', zip: 'Zip', paste: 'Paste', spreadsheet: 'Workbook' };
@@ -1644,26 +1867,255 @@ function renderSidebar() {
 }
 
 // Library tool — full-canvas grid of saved checks with re-check / download / remove.
+// In compare mode the cards become a two-pick selector instead (see renderDiff).
 function renderLibrary() {
   const grid = $('#lib-grid'); if (!grid) return;
+  // Drop any picks that no longer exist (removed/cleared) before rendering.
+  comparePicks = comparePicks.filter((id) => libraryCache.some((a) => a.id === id));
   const q = ($('#lib-search')?.value || '').trim().toLowerCase();
   const items = libraryCache.filter((a) => !q || (a.name || '').toLowerCase().includes(q));
+  // The compare toolbar reflects the toggle state and, when armed, the picks + CTA.
+  renderCompareBar();
   if (!items.length) {
     grid.innerHTML = `<div class="lib-empty">${q ? 'No saved checks match your search.' : 'Nothing saved yet — run a check and it’ll appear here.'}</div>`;
     return;
   }
-  grid.innerHTML = items.map((a) => `<div class="lib-card" data-id="${esc(a.id)}">
+  grid.dataset.compare = compareMode ? 'on' : '';
+  grid.innerHTML = items.map((a) => {
+    const picked = comparePicks.indexOf(a.id);
+    const pickTag = compareMode && picked >= 0 ? `<span class="lib-pick" aria-hidden="true">${picked === 0 ? 'A' : 'B'}</span>` : '';
+    return `<div class="lib-card${compareMode ? ' selectable' : ''}${picked >= 0 ? ' picked' : ''}" data-id="${esc(a.id)}"${compareMode ? ` role="button" tabindex="0" aria-pressed="${picked >= 0}"` : ''}>
       <div class="lib-card-head">
-        <span class="lib-name" title="${esc(a.name || 'Check')}">${esc(a.name || 'Check')}</span>
+        <span class="lib-name" title="${esc(a.name || 'Check')}">${pickTag}${esc(a.name || 'Check')}</span>
         ${a.verdict ? `<span class="lib-badge" data-v="${esc(a.verdict)}">${esc(VERDICT_SHORT[a.verdict] || '')}</span>` : ''}
       </div>
       <div class="lib-meta">${esc(sourceLabel(a.source))}${a.fileCount ? ` · ${a.fileCount} file${a.fileCount === 1 ? '' : 's'}` : ''}${a.createdAt ? ` · ${esc(relTime(a.createdAt))}` : ''}</div>
-      <div class="lib-actions">
+      ${compareMode ? '' : `<div class="lib-actions">
         <button class="lib-act" type="button" data-act="recheck" data-id="${esc(a.id)}">Re-check</button>
+        ${a.source === 'github' ? `<button class="lib-act" type="button" data-act="drift" data-id="${esc(a.id)}" title="Re-fetch the repo's current HEAD and show what changed">Check for drift</button>` : ''}
         <button class="lib-act" type="button" data-act="download" data-id="${esc(a.id)}">Download</button>
         <button class="lib-act danger" type="button" data-act="remove" data-id="${esc(a.id)}">Remove</button>
+      </div>`}
+    </div>`;
+  }).join('');
+}
+
+// The compare toolbar lives just above the grid. Off: a single "Compare" toggle.
+// On: a hint + the running pick count + a "Compare" CTA (enabled at two picks) and
+// a "Cancel" out. Rebuilt on every renderLibrary so it stays in step with the picks.
+function renderCompareBar() {
+  const grid = $('#lib-grid'); if (!grid) return;
+  let bar = $('#lib-compare-bar');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'lib-compare-bar';
+    bar.className = 'lib-compare-bar';
+    grid.parentNode.insertBefore(bar, grid);
+    bar.addEventListener('click', (e) => {
+      const act = e.target.closest('[data-cmp]')?.dataset.cmp;
+      if (act === 'toggle') { compareMode = true; comparePicks = []; renderLibrary(); }
+      else if (act === 'cancel') { compareMode = false; comparePicks = []; renderLibrary(); }
+      else if (act === 'run' && comparePicks.length === 2) openCompare(comparePicks[0], comparePicks[1]);
+    });
+  }
+  const hasItems = libraryCache.length >= 2;
+  if (!compareMode) {
+    bar.innerHTML = hasItems
+      ? `<button class="lib-clear" type="button" data-cmp="toggle">Compare two</button>`
+      : '';
+    return;
+  }
+  const n = comparePicks.length;
+  bar.innerHTML = `
+    <span class="cmp-hint">${n < 2 ? `Pick ${2 - n} more check${2 - n === 1 ? '' : 's'} to compare` : 'Two picked — compare the delta'}</span>
+    <span class="cmp-spacer"></span>
+    <button class="lib-clear" type="button" data-cmp="cancel">Cancel</button>
+    <button class="lib-clear cmp-go" type="button" data-cmp="run"${n === 2 ? '' : ' disabled'}>Compare</button>`;
+}
+
+// Toggle an asset's selection in compare mode. Two-slot FIFO: a third pick evicts
+// the oldest so there are never more than two.
+function toggleComparePick(id) {
+  const i = comparePicks.indexOf(id);
+  if (i >= 0) comparePicks.splice(i, 1);
+  else { comparePicks.push(id); if (comparePicks.length > 2) comparePicks.shift(); }
+  renderLibrary();
+}
+
+// Load a saved asset's stored corpus back into the {source,label,files,meta} shape
+// the engine accepts. Returns null if the asset is missing or its blob can't parse.
+async function loadCorpusForCompare(id) {
+  let a; try { a = await getAsset(id); } catch { a = null; }
+  if (!a || !a.blob) return null;
+  let p; try { p = JSON.parse(await a.blob.text()); } catch { return null; }
+  return {
+    corpus: { source: p.source || a.source || 'upload', label: p.label || a.name || 'Check', files: p.files || [], meta: p.meta || {}, notes: [] },
+    name: a.name || p.label || 'Check',
+    savedAt: a.createdAt || p.savedAt || null,
+  };
+}
+
+// Compare two saved checks: load each stored corpus, RE-RESOLVE both with today's
+// engine (analyze — never trust the stored verdict.key), then show the per-condition
+// delta in an overlay built by the reusable renderDiff helper.
+async function openCompare(idA, idB) {
+  const [A, B] = await Promise.all([loadCorpusForCompare(idA), loadCorpusForCompare(idB)]);
+  if (!A || !B) return;   // one couldn't be loaded — leave the picker as-is
+  let rA, rB;
+  try { rA = analyze(A.corpus); rB = analyze(B.corpus); } catch { return; }
+  renderDiff(rA, rB, { a: A.name, b: B.name, aWhen: A.savedAt, bWhen: B.savedAt });
+}
+
+// Rebuild the input loadFromGitHub expects from a saved corpus's repoMeta. Branch-aware
+// (so a non-default branch / subdir is preserved); falls back to the bare owner/repo slug.
+function githubSlugFromMeta(rm) {
+  if (!rm || !rm.owner || !rm.repo) return null;
+  if (rm.branch || rm.subdir) {
+    let u = `https://github.com/${rm.owner}/${rm.repo}/tree/${rm.branch || 'HEAD'}`;
+    if (rm.subdir) u += `/${rm.subdir}`;
+    return u;
+  }
+  return `${rm.owner}/${rm.repo}`;
+}
+
+// Re-check a GitHub-sourced saved check for DRIFT: re-fetch the repo's current HEAD,
+// re-resolve it, and diff it against an analyze() of the STORED corpus — surfacing the
+// conditions that flipped and any lane move (reuses renderDiff). Non-github checks (or
+// any fetch failure: token / rate-limit / 404 / network) fall back to plain reopen.
+let busyDrift = false;
+async function checkDrift(id, btn) {
+  if (busyDrift) return;
+  const loaded = await loadCorpusForCompare(id);
+  if (!loaded) return;
+  const stored = loaded.corpus;
+  const rm = (stored.meta && (stored.meta.repoMeta || stored.meta)) || {};
+  const slug = stored.source === 'github' ? githubSlugFromMeta(rm.owner ? rm : stored.meta) : null;
+  if (!slug) { reopenAsset(id); return; }   // not a re-fetchable github check → reopen the frozen corpus
+
+  busyDrift = true;
+  const restore = btn ? { txt: btn.textContent, dis: btn.disabled } : null;
+  if (btn) { btn.disabled = true; btn.textContent = 'Checking…'; }
+  try {
+    const fresh = await loadFromGitHub(slug, ($('#token')?.value || '').trim(), () => {});
+    if (!fresh || !fresh.files || !fresh.files.length) throw new Error('No readable code files were found at that repo now.');
+    let rStored, rFresh;
+    try { rStored = analyze(stored); rFresh = analyze(fresh); }
+    catch { reopenAsset(id); return; }
+    renderDiff(rStored, rFresh, {
+      a: 'When you saved it', b: 'Today',
+      aWhen: loaded.savedAt, bWhen: Date.now(), mode: 'drift',
+    });
+  } catch (err) {
+    // Calm fallback: tell the user the live read couldn't run, then reopen the saved
+    // corpus so they still land on a usable result (never a dead end).
+    announce(friendly(String((err && err.message) || err)) + ' Showing the saved check instead.');
+    reopenAsset(id);
+  } finally {
+    busyDrift = false;
+    if (btn && restore) { btn.disabled = restore.dis; btn.textContent = restore.txt; }
+  }
+}
+
+// ----------------------------------------------------------------------------
+// renderDiff(resultA, resultB, labels) — the reusable two-column condition diff.
+// Shows both checks' per-condition status side by side, highlights the rows that
+// CHANGED (status or driving flipped), and surfaces the lane move A → B. Built as
+// an overlay over #work (same inert-managed pattern as the walkthrough). The
+// recheck-drift feature reuses this with {a:'When you saved it', b:'Today'}.
+// ----------------------------------------------------------------------------
+let currentDiffClose = null;
+function renderDiff(rA, rB, labels = {}) {
+  if (!rA || !rB) return;
+  if (currentDiffClose) currentDiffClose();
+  const labA = labels.a || 'A';
+  const labB = labels.b || 'B';
+
+  // Status for a condition the same way the dock derives it, so the words match the
+  // rest of the app. Returns { cls, txt } (the .state pill class + plain label).
+  const statusOf = (r, c) => {
+    if (!c) return { cls: '', txt: '—' };
+    if (c.id === 'c51') { const d = relianceDisplay(c.assumption && c.assumption.value); return { cls: d.cls, txt: d.txt }; }
+    if (c.id === 'c54') { const d = logicDisplay(r.posture, c.status); return { cls: d.cls, txt: d.txt }; }
+    const [cls, txt] = STATE_COPY[c.status] || STATE_COPY.lane2;
+    return { cls, txt };
+  };
+  const condLabel = (c) => {
+    const def = COND[c.id] || {};
+    const copy = c.status === 'pass' ? (def.pass || c.sentence) : (def.fail || c.sentence);
+    return splitCopy(copy)[0];
+  };
+
+  // Union of condition ids in engine order (A's order first, then any B-only ids).
+  const byIdA = new Map(rA.conditions.map((c) => [c.id, c]));
+  const byIdB = new Map(rB.conditions.map((c) => [c.id, c]));
+  const ids = [...rA.conditions.map((c) => c.id), ...rB.conditions.filter((c) => !byIdA.has(c.id)).map((c) => c.id)];
+
+  let changedCount = 0;
+  const rows = ids.map((id) => {
+    const ca = byIdA.get(id), cb = byIdB.get(id);
+    const sa = statusOf(rA, ca), sb = statusOf(rB, cb);
+    const drivingA = !!(ca && ca.driving), drivingB = !!(cb && cb.driving);
+    const changed = (ca && cb) ? (ca.status !== cb.status || drivingA !== drivingB) : true;
+    if (changed) changedCount++;
+    const ref = (ca && ca.ref) || (cb && cb.ref) || '';
+    const label = ca ? condLabel(ca) : (cb ? condLabel(cb) : id);
+    return `<tr class="${changed ? 'cmp-changed' : ''}">
+      <th scope="row"><span class="cmp-ref">${esc(ref)}</span><span class="cmp-label">${esc(label)}</span></th>
+      <td><span class="state ${sa.cls}">${esc(sa.txt)}</span>${drivingA ? '<span class="cmp-drive" title="A driving reason">decided it</span>' : ''}</td>
+      <td>${changed ? '<span class="cmp-arrow" aria-hidden="true">→</span>' : ''}<span class="state ${sb.cls}">${esc(sb.txt)}</span>${drivingB ? '<span class="cmp-drive" title="A driving reason">decided it</span>' : ''}</td>
+    </tr>`;
+  }).join('');
+
+  const outA = OUTCOME[rA.verdict.key], outB = OUTCOME[rB.verdict.key];
+  const laneMoved = rA.verdict.key !== rB.verdict.key;
+  const rank = (k) => LANE_RANK[k] ?? 99;
+  const dir = laneMoved ? (rank(rB.verdict.key) < rank(rA.verdict.key) ? 'lighter' : 'heavier') : 'same';
+  const laneLine = laneMoved
+    ? `<b>${esc(FOOT_VERDICT[rA.verdict.key] || '')}</b> <span class="cmp-arrow" aria-hidden="true">→</span> <b>${esc(FOOT_VERDICT[rB.verdict.key] || '')}</b> <span class="cmp-dir cmp-dir-${dir}">${dir === 'lighter' ? 'lighter' : 'heavier'}</span>`
+    : `Same verdict — <b>${esc(FOOT_VERDICT[rA.verdict.key] || '')}</b>`;
+  const isDrift = labels.mode === 'drift';
+  const summaryLine = changedCount
+    ? `${changedCount} of ${ids.length} checks changed`
+    : (isDrift ? `No drift — still ${FOOT_VERDICT[rB.verdict.key] || 'the same read'}` : 'No checks changed');
+  const titleText = isDrift ? 'Drift since you saved it' : 'Compare checks';
+  const ariaLabel = isDrift ? 'Re-check for drift' : 'Compare two checks';
+
+  const trigger = document.activeElement;
+  const washed = document.querySelectorAll('.skip, .rail, .toolhead, .dock, .foot, #card, .sidebar, .bottompanel');
+  const ov = document.createElement('div');
+  ov.className = 'diff-overlay';
+  ov.setAttribute('role', 'dialog');
+  ov.setAttribute('aria-modal', 'true');
+  ov.setAttribute('aria-label', ariaLabel);
+  ov.innerHTML = `
+    <div class="diff-card" data-from="${esc(outA)}" data-to="${esc(outB)}">
+      <button class="diff-close" type="button" aria-label="Close compare">✕</button>
+      <div class="diff-head">
+        <div class="diff-title">${esc(titleText)}</div>
+        <div class="diff-lane">${laneLine}</div>
+        <div class="diff-sub">${esc(summaryLine)}</div>
       </div>
-    </div>`).join('');
+      <table class="diff-table">
+        <thead><tr><th scope="col">Check</th><th scope="col" class="cmp-col-a">${esc(labA)}</th><th scope="col" class="cmp-col-b">${esc(labB)}</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+  $('#work').appendChild(ov);
+  washed.forEach((el) => el.setAttribute('inert', ''));
+  const close = () => {
+    ov.remove();
+    washed.forEach((el) => el.removeAttribute('inert'));
+    document.removeEventListener('keydown', onKey);
+    currentDiffClose = null;
+    if (trigger && trigger.focus) trigger.focus();
+  };
+  const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); close(); } };
+  document.addEventListener('keydown', onKey);
+  ov.querySelector('.diff-close').addEventListener('click', close);
+  ov.addEventListener('click', (e) => { if (e.target === ov) close(); });   // click backdrop to dismiss
+  ov.querySelector('.diff-close').focus();
+  currentDiffClose = close;
+  announce(`${isDrift ? 'Drift check' : 'Compare'}: ${summaryLine}. ${laneMoved ? 'Verdict changed.' : 'Same verdict.'}`);
 }
 
 // Learn where the read will run (local vs hosted) so the privacy line can be
@@ -1719,12 +2171,22 @@ function initShell() {
     if (btn) {
       const id = btn.dataset.id;
       if (btn.dataset.act === 'recheck') reopenAsset(id);
+      else if (btn.dataset.act === 'drift') checkDrift(id, btn);
       else if (btn.dataset.act === 'download') downloadAsset(id);
       else if (btn.dataset.act === 'remove') removeAsset(id);
       return;
     }
     const card = e.target.closest('.lib-card[data-id]');
-    if (card) reopenAsset(card.dataset.id);
+    if (!card) return;
+    // In compare mode a card click toggles its A/B selection; otherwise it re-opens.
+    if (compareMode) toggleComparePick(card.dataset.id);
+    else reopenAsset(card.dataset.id);
+  });
+  // Keyboard select in compare mode (cards are role=button there).
+  $('#lib-grid')?.addEventListener('keydown', (e) => {
+    if (!compareMode || (e.key !== 'Enter' && e.key !== ' ')) return;
+    const card = e.target.closest('.lib-card[data-id]');
+    if (card) { e.preventDefault(); toggleComparePick(card.dataset.id); }
   });
   $('#lib-search')?.addEventListener('input', () => renderLibrary());
   $('#lib-clear')?.addEventListener('click', () => clearAll());
