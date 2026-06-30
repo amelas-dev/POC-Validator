@@ -100,6 +100,43 @@ await withFetch(async (url) => {
 ok('public file bodies read from raw.githubusercontent.com', hitRawCdn);
 ok('public path does NOT call the rate-limited Contents API', !hitContentsApi);
 
+// A rejected token (401) must NOT block a PUBLIC repo. The token field is a password
+// input, so a password manager can autofill junk the user never typed → GitHub 401s
+// even a public repo. The loader must drop the bad token, retry anonymously, and read
+// bodies from the raw CDN.
+let sawAuthedMeta = false, sawAnonMeta = false, sawContents401 = false, sawRaw401 = false;
+const recovered = await withFetch(async (url, opts) => {
+  const u = String(url);
+  const authed = !!(opts && opts.headers && opts.headers.Authorization);
+  if (u === 'https://api.github.com/repos/o/r') {
+    if (authed) { sawAuthedMeta = true; return res(401, { body: '{"message":"Bad credentials"}' }); }
+    sawAnonMeta = true; return res(200, { body: JSON.stringify({ default_branch: 'main', private: false }) });
+  }
+  if (u.includes('/git/trees/')) return res(200, { body: JSON.stringify({ tree: [{ type: 'blob', path: 'app.js', size: 10 }] }) });
+  if (u.startsWith('https://api.github.com/repos/o/r/contents/')) { sawContents401 = true; return res(200, { body: 'const x=1;' }); }
+  if (u.startsWith('https://raw.githubusercontent.com/o/r/')) { sawRaw401 = true; return res(200, { body: 'const x=1;' }); }
+  return res(404);
+}, () => loadFromGitHub('o/r', 'ghp_staleBadToken', () => {}));
+ok('rejected token: authed meta 401 then anonymous retry', sawAuthedMeta && sawAnonMeta);
+ok('rejected token: public bodies still via raw CDN, not Contents API', sawRaw401 && !sawContents401);
+ok('rejected token on a public repo still yields files', recovered.files.length === 1);
+// The raw 401 message must prompt for a token, never the "couldn't reach" network ghost.
+const bad401 = await grab(() => res(401, { body: '{"message":"Bad credentials"}' }));
+ok('401 maps to a token message (not a network error)', bad401.threw && /token/i.test(bad401.msg) && !/reach|network|failed|fetch/i.test(bad401.msg));
+
+// A PRIVATE repo with a VALID token routes bodies through the authenticated Contents
+// API — the raw CDN can't read a private repo.
+let privContents = false, privRaw = false;
+await withFetch(async (url) => {
+  const u = String(url);
+  if (u === 'https://api.github.com/repos/o/r') return res(200, { body: JSON.stringify({ default_branch: 'main', private: true }) });
+  if (u.includes('/git/trees/')) return res(200, { body: JSON.stringify({ tree: [{ type: 'blob', path: 'app.js', size: 10 }] }) });
+  if (u.startsWith('https://api.github.com/repos/o/r/contents/')) { privContents = true; return res(200, { body: 'secret' }); }
+  if (u.startsWith('https://raw.githubusercontent.com/')) { privRaw = true; return res(200, { body: 'secret' }); }
+  return res(404);
+}, () => loadFromGitHub('o/r', 'ghp_validToken', () => {}));
+ok('private repo bodies use the authenticated Contents API (not raw)', privContents && !privRaw);
+
 console.log(`${B}buildCodeDigest — hardened (FIX-16 / FIX-24)${X}`);
 ok('file missing path does not throw', (() => { try { buildCodeDigest({ files: [{ text: 'x=1' }] }); return true; } catch { return false; } })());
 ok('non-array files does not throw -> empty digest', (() => { try { return buildCodeDigest({ files: {} }).code === '(no readable source files)'; } catch { return false; } })());

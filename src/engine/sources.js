@@ -105,31 +105,43 @@ export function parseGitHubUrl(input) {
   };
 }
 
+// Map a failed GitHub response to a friendly Error, tagging it with `.status` so
+// callers can react (e.g. drop a rejected token and retry anonymously).
+async function ghError(res) {
+  const err = (msg) => Object.assign(new Error(msg), { status: res.status });
+  // 401 = the Authorization header was rejected (bad / expired token). GitHub
+  // returns this even for a PUBLIC repo, so a stale token makes a public repo
+  // unreadable. The token field is a password input, so a password manager may
+  // have autofilled a value the user never typed — say so plainly.
+  if (res.status === 401) {
+    return err('Your GitHub token was rejected (it may be expired or wrong). Clear the token to read a public repo, paste a valid one, or upload the files directly.');
+  }
+  // 403/429 mean a rate limit. The PRIMARY (60/hr) limit sets
+  // x-ratelimit-remaining:0; a SECONDARY (abuse) limit — tripped by bursts of
+  // concurrent requests — returns 403 with a Retry-After header and/or a
+  // "rate limit" body but NO remaining:0. Recognize both, so a real rate limit
+  // surfaces the actionable "add a token" message rather than the generic
+  // "couldn't reach that repo" (which sent users chasing a network ghost).
+  if (res.status === 403 || res.status === 429) {
+    const remaining = res.headers.get('x-ratelimit-remaining');
+    const retryAfter = res.headers.get('retry-after');
+    let body = '';
+    try { body = await res.clone().text(); } catch { /* body may be unreadable */ }
+    if (remaining === '0' || retryAfter || /rate limit/i.test(body)) {
+      return err('GitHub API rate limit reached. Add a personal access token to continue, or upload the files directly.');
+    }
+    // A non-rate-limit 403 means the repo is private / the token lacks access.
+    return err('Repository not found, or it is private. Add a token, or upload the files directly.');
+  }
+  if (res.status === 404) return err('Repository not found, or it is private. Add a token, or upload the files directly.');
+  return err(`GitHub request failed (${res.status}).`);
+}
+
 async function ghJson(url, token) {
   const headers = { Accept: 'application/vnd.github+json' };
   if (token) headers.Authorization = `Bearer ${token}`;
   const res = await fetch(url, { headers });
-  if (!res.ok) {
-    // 403/429 mean a rate limit. The PRIMARY (60/hr) limit sets
-    // x-ratelimit-remaining:0; a SECONDARY (abuse) limit — tripped by bursts of
-    // concurrent requests — returns 403 with a Retry-After header and/or a
-    // "rate limit" body but NO remaining:0. Recognize both, so a real rate limit
-    // surfaces the actionable "add a token" message rather than the generic
-    // "couldn't reach that repo" (which sent users chasing a network ghost).
-    if (res.status === 403 || res.status === 429) {
-      const remaining = res.headers.get('x-ratelimit-remaining');
-      const retryAfter = res.headers.get('retry-after');
-      let body = '';
-      try { body = await res.clone().text(); } catch { /* body may be unreadable */ }
-      if (remaining === '0' || retryAfter || /rate limit/i.test(body)) {
-        throw new Error('GitHub API rate limit reached. Add a personal access token to continue, or upload the files directly.');
-      }
-      // A non-rate-limit 403 means the repo is private / the token lacks access.
-      throw new Error('Repository not found, or it is private. Add a token, or upload the files directly.');
-    }
-    if (res.status === 404) throw new Error('Repository not found, or it is private. Add a token, or upload the files directly.');
-    throw new Error(`GitHub request failed (${res.status}).`);
-  }
+  if (!res.ok) throw await ghError(res);
   return res.json();
 }
 
@@ -139,8 +151,28 @@ export async function loadFromGitHub(input, token, onProgress = () => {}) {
   const { owner, repo, subdir } = parsed;
 
   onProgress(`Reading ${owner}/${repo}…`);
-  const meta = await ghJson(`https://api.github.com/repos/${owner}/${repo}`, token);
+  let meta;
+  try {
+    meta = await ghJson(`https://api.github.com/repos/${owner}/${repo}`, token);
+  } catch (e) {
+    // A token GitHub rejects (401) blocks even a PUBLIC repo. The token field is a
+    // password input, so a password manager may have autofilled a value the user
+    // never typed. Drop the bad token and retry anonymously — this also routes the
+    // tree + file bodies through the unauthenticated raw-CDN path below. A genuinely
+    // private repo then fails as 404 ("add a token"), which is the honest outcome.
+    if (token && e.status === 401) {
+      token = '';
+      meta = await ghJson(`https://api.github.com/repos/${owner}/${repo}`, '');
+    } else {
+      throw e;
+    }
+  }
   const branch = parsed.branch || meta.default_branch || 'main';
+  // Public repos read file bodies from the raw CDN (no auth, not rate-limited);
+  // private repos need the authenticated Contents API. Key off the repo's actual
+  // visibility, not merely whether a token was supplied — a valid token on a public
+  // repo should still use the cheaper raw path.
+  const isPrivate = !!meta.private;
 
   onProgress('Listing files…');
   const tree = await ghJson(
@@ -172,9 +204,9 @@ export async function loadFromGitHub(input, token, onProgress = () => {}) {
   // 60/hr core-API limit and tolerates the concurrent burst, so a whole repo costs just
   // the 2 API calls above (meta + tree) instead of one-per-file. Pulling every file
   // through the rate-limited Contents API used to exhaust the limit / trip GitHub's
-  // secondary (abuse) limiter, surfacing as "couldn't reach that repo". A token means a
-  // private repo, which the raw CDN can't authenticate — those go through the
-  // authenticated Contents API (5000/hr, ample for the file cap).
+  // secondary (abuse) limiter, surfacing as "couldn't reach that repo". A PRIVATE repo
+  // (isPrivate, resolved from the meta response) can't be read from the raw CDN, so it
+  // goes through the authenticated Contents API (5000/hr, ample for the file cap).
   // Code files dropped by the file-count cap, PLUS code files dropped by the size/symlink
   // guard (textualAll - textual). Both are real code files we could not read — folding the
   // size-dropped set in here keeps them out of the "non-code" note (FIX-23).
@@ -187,7 +219,7 @@ export async function loadFromGitHub(input, token, onProgress = () => {}) {
       const node = candidates[i];
       try {
         const encPath = node.path.split('/').map(encodeURIComponent).join('/');
-        const res = token
+        const res = isPrivate
           ? await fetch(
             `https://api.github.com/repos/${owner}/${repo}/contents/${encPath}?ref=${encodeURIComponent(branch)}`,
             { headers: { Accept: 'application/vnd.github.raw', Authorization: `Bearer ${token}` } },
