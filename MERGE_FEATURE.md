@@ -58,5 +58,8 @@ Honest prior-art acknowledgement and the claim elements are in the disclosure §
 
 - ✅ Engine (overlap / merge / governance-delta / core+ledger) + tests + determinism.
 - ✅ IP docs (`docs/INVENTION_DISCLOSURE.md`, `docs/DESIGN_DECISIONS.md`, this file).
-- ◑ Persistence (Core manifest in IndexedDB) and UI (Library actions, merge preview, lineage
-  drawer) — building on the existing rail/dock/card shell and result renderer.
+- ✅ Persistence — Core manifest in a separate local IndexedDB (`src/library/core-store.js`).
+- ✅ UI — Library "Set as Core" / "Merge into Core", a Core banner, the three-section merge
+  preview (Overlap · Governance impact · Lineage), and a Lineage / audit drawer with
+  "Export audit record (JSON)". Reuses the search/diff modal a11y pattern (inert backdrop,
+  Esc/restore-focus), `announce()` live region, reduced-motion, plain language.
