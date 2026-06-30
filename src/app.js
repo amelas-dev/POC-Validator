@@ -122,6 +122,8 @@ const PATTERN = {
   'Drafting / summarizing': 'a writing helper', 'ML scoring / inference': 'a scoring tool', 'Utility': 'a small utility',
 };
 
+// Small lane label for the verdict eyebrow (editorial caps via CSS).
+const LANE_EYEBROW = { ready: 'Lane 1 · the light path', developer: 'Lane 2 · developer build', signoff: 'Sign-off · committee review' };
 const WOULDBE = { lane1: 'the light path', lane2: 'developer-built', approve: 'a sign-off' };
 const LANE_RANK = { lane1: 0, lane2: 1, approve: 2 };
 const ANNOT = { host: 'custom server', c53: 'record update', c55: 'outside AI call', c56: 'outside-the-company call', c57: 'local data save', c54: 'judgment call', c52: 'client/fund data', c51: 'reliance on others' };
@@ -600,32 +602,41 @@ function renderResult(fresh = false) {
   // For a READY (Lane-1) outcome the reasons eyebrow and the placeholder all-clear
   // tile are suppressed (hero → summary → see-the-full-check → CTA); developer/signoff
   // keep the eyebrow + driving tiles.
-  const reasonsBlock = (outcome === 'ready') ? '' : `
-    <div class="reasons-eyebrow">${drivers.length ? 'Here’s what decided it' : 'The all-clear'}</div>
+  const reasonsBlock = `
+    <div class="reasons-eyebrow">${outcome === 'ready' ? 'What’s clear' : (drivers.length ? 'Here’s what decided it' : 'The all-clear')}</div>
     <div class="tiles">${tiles}</div>`;
 
+  const laneEyebrow = LANE_EYEBROW[outcome] || '';
   const el = $('#result');
   el.dataset.outcome = outcome;
   el.dataset.fresh = fresh ? '1' : '';   // entrance animations run only on the initial reveal
+  // Two zones that use the full width: the ANSWER (left — verdict, plain-language
+  // read, the command actions) and the EVIDENCE (right — the why, as a ledger, plus
+  // the levers the user can change). Differentiated treatments, no card wrapper.
   el.innerHTML = `
-    <div class="hero">
-      <div class="orb" aria-hidden="true"></div>
-      <div><h2 class="headline" id="verdict">${esc(v.headline)}</h2></div>
+    <div class="vr-lead">
+      <div class="vr-eyebrow"><span class="orb" aria-hidden="true"></span>${esc(laneEyebrow)}</div>
+      <h2 class="headline" id="verdict">${esc(v.headline)}</h2>
+      <p class="vr-story">${esc(v.story)}</p>
+      ${summaryCard}
+      ${confNudge}
+      <div class="action">
+        <button class="cta" id="cta">${esc(v.cta)}</button>
+        <div class="subactions">
+          <button class="ghost record" id="record" type="button" title="Download a self-contained hand-off record"><span class="dl">${ICONS.download}</span> Download record</button>
+          <span class="sub-sep" aria-hidden="true"></span>
+          <button class="ghost walk" id="walk"><span class="play">${ICONS.play}</span> Walk me through it</button>
+        </div>
+      </div>
     </div>
-    ${summaryCard}
-    ${confNudge}
-    ${seeFull}
-    ${whyLighter}
-    ${confirmBlock}
-    ${reasonsBlock}
-    ${lightenPill}
-
-    <div class="action">
-      <button class="cta" id="cta">${esc(v.cta)}</button>
-      <button class="ghost record" id="record" type="button" title="Download a self-contained hand-off record"><span class="dl">${ICONS.download}</span> Download record</button>
-    </div>
-    <button class="ghost walk" id="walk"><span class="play">${ICONS.play}</span> Walk me through it</button>
-    ${aiHeldBlock}`;
+    <aside class="vr-aside">
+      ${reasonsBlock}
+      ${whyLighter}
+      ${lightenPill}
+      ${confirmBlock}
+      ${aiHeldBlock}
+      ${seeFull}
+    </aside>`;
 
   announce(`${v.headline} ${v.story}`);
   updateFooter(r);
