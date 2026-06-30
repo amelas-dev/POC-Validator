@@ -472,6 +472,10 @@ function friendly(m) {
 // ============================================================================
 function slugOf(r) { return r.meta.source === 'github' && r.meta.repoMeta.owner ? `${r.meta.repoMeta.owner}/${r.meta.repoMeta.repo}` : r.meta.label; }
 
+// A calm one-liner used until (or instead of) the AI's read — so the "Here's what I
+// read" card is always present, even with no model available.
+function deterministicSummary(r) { return `Looks like ${PATTERN[r.pattern] || 'a small utility'}.`; }
+
 function renderResult() {
   const view = computeView();
   const r = view.r;
@@ -481,6 +485,17 @@ function renderResult() {
   const v = VERDICT[outcome];
   const slug = slugOf(r);
   const pat = PATTERN[r.pattern] || 'a small utility';
+
+  // "Here's what I read" — the AI's plain-language summary of the upload (so the user
+  // confirms the app understood it), with a deterministic fallback when no model ran.
+  const summaryText = (aiResult && aiResult.summary) ? aiResult.summary : deterministicSummary(r);
+  const nFiles = (r.meta && r.meta.fileCount) || 0;
+  const summaryCard = `
+    <div class="summary"${aiResult && aiResult.summary ? ' data-ai="1"' : ''}>
+      <div class="summary-head">${ICONS.sparkles}<span>Here’s what I read</span></div>
+      <p class="summary-text">${esc(summaryText)}</p>
+      <div class="summary-meta"><span class="slug">${esc(slug)}</span><span class="sdot" aria-hidden="true">·</span>${esc(sourceLabel(r.meta.source))}<span class="sdot" aria-hidden="true">·</span>${nFiles} file${nFiles === 1 ? '' : 's'}<span class="sdot" aria-hidden="true">·</span>looks like ${esc(pat)}</div>
+    </div>`;
 
   const drivers = r.conditions.filter((c) => c.driving);
   const tiles = (outcome === 'ready' || drivers.length === 0)
@@ -525,7 +540,7 @@ function renderResult() {
       <div><h2 class="headline" id="verdict">${esc(v.headline)}</h2></div>
     </div>
     <div class="story">${esc(v.story)}</div>
-    <div class="caption"><span class="slug">${esc(slug)}</span> · looks like ${esc(pat)}</div>
+    ${summaryCard}
     ${seeFull}
 
     <div class="reasons-eyebrow">${drivers.length && outcome !== 'ready' ? 'Here’s what decided it' : 'The all-clear'}</div>

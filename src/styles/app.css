@@ -437,6 +437,21 @@ body { overflow: hidden; }   /* the shell owns the viewport; only .main scrolls 
 .caption { font-family: var(--font-ui); font-size: 12.5px; color: var(--soft); margin-bottom: 20px; animation: fade 0.5s var(--ease) 0.36s both; }
 .caption .slug { color: var(--muted); }
 
+/* "Here's what I read" — the plain-language summary of the upload, so the user can
+   confirm the app understood what they posted. Calm card; AI-written when available,
+   deterministic one-liner otherwise. */
+.summary {
+  margin: 16px 0 18px; padding: 14px 17px; max-width: 56ch;
+  background: var(--white); border: 1px solid var(--chrome-line); border-radius: 14px;
+  animation: fade 0.5s var(--ease) 0.34s both;
+}
+.summary-head { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-display); font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--soft); margin-bottom: 7px; }
+.summary-head svg { width: 13px; height: 13px; color: var(--brand); }
+.summary-text { font-family: var(--font-ui); font-size: 15px; line-height: 1.5; color: var(--ink); margin: 0; letter-spacing: -0.003em; }
+.summary-meta { font-size: 12px; color: var(--soft); margin-top: 9px; }
+.summary-meta .slug { color: var(--muted); font-weight: 500; }
+.summary-meta .sdot { margin: 0 6px; opacity: 0.55; }
+
 .reasons-eyebrow {
   font-family: var(--font-display); font-size: 10.5px; font-weight: 500; letter-spacing: 0.14em; text-transform: uppercase;
   color: var(--soft); margin-bottom: 12px; animation: fade 0.5s var(--ease) 0.4s both;

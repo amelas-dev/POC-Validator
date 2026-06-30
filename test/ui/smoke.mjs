@@ -85,6 +85,10 @@ try {
   await page.waitForSelector('#card[data-state="result"]', { timeout: 20000 });
   ok('a check renders a result', /Good to go|developer|sign-off|Lane/i.test(await page.textContent('.view-result')));
 
+  // the "Here's what I read" summary is always present (AI text, or deterministic
+  // fallback when no model is available — as in this no-backend test run).
+  ok('result shows the upload summary', !!(await page.$('.view-result .summary .summary-text')) && (await page.textContent('.view-result .summary .summary-text')).trim().length > 0);
+
   // ---- the check was saved -> History shows it, re-openable -----------------
   await page.click('#rail-tools .rail-btn[data-tool="history"]');
   await page.waitForSelector('#side-body .recent[data-id]', { timeout: 5000 });
