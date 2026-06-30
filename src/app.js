@@ -1457,15 +1457,9 @@ function initShell() {
   applyTheme(store.get('theme', 'auto'));
   resetFooter();
 
-  const optsBtn = $('#opts-btn'), optsMenu = $('#opts-menu');
-  const closeOpts = () => { optsMenu.hidden = true; optsBtn.setAttribute('aria-expanded', 'false'); };
-  const toggleOpts = () => { const open = optsMenu.hidden; optsMenu.hidden = !open; optsBtn.setAttribute('aria-expanded', String(open)); };
-  optsBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleOpts(); });
-  $('#settings-btn')?.addEventListener('click', (e) => { e.stopPropagation(); closeOpts(); openSettings(); });
-  $('#account-btn')?.addEventListener('click', (e) => { e.stopPropagation(); closeOpts(); openAccount(); });
-  optsMenu.addEventListener('click', (e) => e.stopPropagation());
-  document.addEventListener('click', closeOpts);
-  $('#theme-seg')?.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => applyTheme(b.dataset.theme)));
+  // The account icon is the single entry to the full Settings overlay (which
+  // carries Appearance/theme, Intelligence, Privacy, About alongside Account).
+  $('#account-btn')?.addEventListener('click', (e) => { e.stopPropagation(); openAccount(); });
 
   $('#new-check')?.addEventListener('click', reset);
   $('#dock-toggle')?.addEventListener('click', closeDrawer);
