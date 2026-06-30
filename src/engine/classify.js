@@ -270,7 +270,36 @@ function decide(f, ua = {}) {
 // Derive every fact that depends ONLY on the code — never on user assumptions. This is
 // the expensive half (scan + greps + detectors); the UI caches it per corpus so what-if
 // toggles re-run only the cheap resolve() below instead of re-scanning every file.
-export function extractFacts(corpus) {
+// evOf builds up-to-3 deduped evidence rows for the §5 display from the scan's signal
+// map (S). Factored out of extractFacts so the same closure can be re-attached AFTER the
+// heavy scan runs in a Web Worker — functions don't survive structured-clone, so the
+// worker returns the serializable core (which carries S as plain data) and the main
+// thread calls hydrateFacts() to rebuild this. See extractFactsCore / hydrateFacts.
+function makeEvOf(S) {
+  return (...ids) => {
+    const seen = new Set();
+    const out = [];
+    for (const id of ids) {
+      const e = S[id];
+      if (!e) continue;
+      const list = e.runtimeEvidence.length ? e.runtimeEvidence : e.evidence;
+      for (const it of list) {
+        const k = it.path + ':' + it.line + ':' + it.text;
+        if (seen.has(k)) continue;
+        seen.add(k);
+        out.push({ path: it.path, line: it.line, text: it.text });
+        if (out.length >= 3) return out;
+      }
+    }
+    return out;
+  };
+}
+
+// extractFactsCore: the heavy scan + fact derivation. Returns ONLY serializable data
+// (no evOf closure, so it survives a Worker postMessage). Call hydrateFacts() on the
+// result to get a bundle resolve() can use. extractFacts() below composes the two for
+// callers that run everything on one thread (tests, advisor, the sync fallback).
+export function extractFactsCore(corpus) {
   const scan = scanCorpus(corpus);
   const S = scan.signals;
   // Reuse the comment-stripped text the scanner already produced — no second strip pass.
@@ -294,23 +323,6 @@ export function extractFacts(corpus) {
   const grepConn = (re) => cleanFiles.some((f) => isConnArtifact(f.path) && re.test(f.clean));
   const fired = (id) => !!(S[id] && S[id].firedRuntime);
   const entry = (id) => S[id];
-  const evOf = (...ids) => {
-    const seen = new Set();
-    const out = [];
-    for (const id of ids) {
-      const e = S[id];
-      if (!e) continue;
-      const list = e.runtimeEvidence.length ? e.runtimeEvidence : e.evidence;
-      for (const it of list) {
-        const k = it.path + ':' + it.line + ':' + it.text;
-        if (seen.has(k)) continue;
-        seen.add(k);
-        out.push({ path: it.path, line: it.line, text: it.text });
-        if (out.length >= 3) return out;
-      }
-    }
-    return out;
-  };
 
   // A file named *.spec.js / *.test.js is treated as a test (its AI calls don't
   // count) — UNLESS runtime code actually imports it, in which case it ships.
@@ -467,7 +479,7 @@ export function extractFacts(corpus) {
   }
 
   return {
-    facts, evOf, pattern, buildTool,
+    facts, signals: S, pattern, buildTool,
     confBase: { level: confLevel, reasons: confReasons },
     fileCount: scan.fileCount,
     meta: {
@@ -477,6 +489,20 @@ export function extractFacts(corpus) {
       notes: (corpus && corpus.notes) || [],
     },
   };
+}
+
+// Re-attach the evOf closure (lost across a Worker structured-clone) to a serializable
+// core, producing the bundle resolve() consumes. `signals` carries the scan's evidence
+// map as plain data, so makeEvOf can rebuild the exact same lookup off-thread.
+export function hydrateFacts(core) {
+  return { ...core, evOf: makeEvOf(core.signals) };
+}
+
+// Public entry: scan + derive + hydrate on the calling thread. The Worker path calls
+// extractFactsCore() in the worker and hydrateFacts() on the main thread instead, so the
+// scan never blocks the UI. resolve(extractFacts(corpus)) behaves exactly as before.
+export function extractFacts(corpus) {
+  return hydrateFacts(extractFactsCore(corpus));
 }
 
 // Pure resolver: cached facts + user assumptions -> verdict, §5 rows, demotion hints,

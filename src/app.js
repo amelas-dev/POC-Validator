@@ -2,13 +2,18 @@
 // The engine (src/engine) decides; this layer translates the decision into one
 // glanceable, jargon-free answer and tucks the technical audit into a drawer.
 
-import { extractFacts, resolve } from './engine/classify.js';
+import { extractFacts, hydrateFacts, resolve } from './engine/classify.js';
 import {
   parseGitHubUrl, loadFromGitHub, loadFromFileList, loadFromZip, loadFromPaste,
+  loadFromPastes, guessPasteName,
 } from './engine/sources.js';
 import { loadFromSpreadsheet, isSpreadsheet } from './engine/spreadsheet.js';
 import { runAdvisor, checkAvailable, DEFAULT_MODEL } from './llm/advisor.js';
 import { wouldDeEscalate } from './llm/clamp.js';
+import {
+  cloudConfigured, initAuth, currentUser, isSignedIn, onAuth,
+  signIn, signUp, signOut, listChecks, insertCheck, clearChecks,
+} from './cloud/supabase.js';
 
 const $ = (s) => document.querySelector(s);
 const card = $('#card');       // the work canvas; data-state drives the view
@@ -183,26 +188,96 @@ function logicDisplay(posture, status) {
 //  Input
 // ============================================================================
 const urlInput = $('#url');
+
+// ---- Pasted-snippet attachments -------------------------------------------
+// A paste longer than this many words is too big for the single-line input, so it collapses
+// into an attachment chip instead of flooding the field (or auto-analyzing). Anything
+// shorter keeps the old "paste a snippet and it just goes" behaviour. The chips can be
+// stacked, reviewed, and removed before checking — and a paste can be ~1M lines (the scan
+// runs in a Worker, so the page never freezes).
+const PASTE_WORD_LIMIT = 100;
+let attachments = [];
+let attachSeq = 0;
+
+// Count words but bail the instant we pass the limit — so classifying a multi-MB paste as
+// "big" costs microseconds (a few hundred chars) instead of tokenizing the whole blob.
+function wordsExceed(text, limit) {
+  let n = 0, inWord = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    const ws = c === 32 || c === 9 || c === 10 || c === 13 || c === 12 || c === 11;
+    if (ws) inWord = false;
+    else if (!inWord) { inWord = true; if (++n > limit) return true; }
+  }
+  return false;
+}
+function countLines(text) { let n = text.length ? 1 : 0; for (let i = 0; i < text.length; i++) if (text.charCodeAt(i) === 10) n++; return n; }
+function fmtSize(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1048576) return `${(bytes / 1024).toFixed(bytes < 10240 ? 1 : 0)} KB`;
+  return `${(bytes / 1048576).toFixed(1)} MB`;
+}
+
+const CHIP_FILE_ICO = '<svg class="chip-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3v5h5"/><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M9 13h6M9 17h6"/></svg>';
+const CHIP_X_ICO = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+
+function addPasteAttachment(text) {
+  const t = String(text || '');
+  const att = { id: ++attachSeq, name: guessPasteName(t, `pasted-${attachments.length + 1}`), text: t, lines: countLines(t), bytes: t.length };
+  attachments.push(att);
+  renderAttachments();
+  clearError();
+  announce(`Attached ${att.name} — ${att.lines.toLocaleString()} lines`);
+}
+function removeAttachment(id) { attachments = attachments.filter((a) => a.id !== id); renderAttachments(); }
+function renderAttachments() {
+  const box = $('#attachments');
+  if (!box) return;
+  box.innerHTML = attachments.map((a) =>
+    `<li class="chip" data-id="${a.id}">${CHIP_FILE_ICO}` +
+    `<span class="chip-body"><span class="chip-name" title="${esc(a.name)}">${esc(a.name)}</span>` +
+    `<span class="chip-meta">${a.lines.toLocaleString()} lines · ${fmtSize(a.bytes)}</span></span>` +
+    `<button class="chip-x" type="button" aria-label="Remove ${esc(a.name)}">${CHIP_X_ICO}</button></li>`,
+  ).join('');
+  box.hidden = attachments.length === 0;
+  syncCheckButton();
+}
+// Enable "Check it" when there's something to check: a staged snippet, or a valid repo URL.
+function syncCheckButton() { $('#analyze').disabled = !(attachments.length || parseGitHubUrl(urlInput.value.trim())); }
+
+$('#attachments').addEventListener('click', (e) => {
+  const li = e.target.closest('.chip'); if (!li || !e.target.closest('.chip-x')) return;
+  removeAttachment(Number(li.dataset.id));
+});
+
 urlInput.addEventListener('input', () => {
-  const ok = !!parseGitHubUrl(urlInput.value.trim());
-  $('#analyze').disabled = !ok;
-  $('#dropzone').classList.toggle('valid', ok && urlInput.value.trim().length > 0);
+  $('#dropzone').classList.toggle('valid', !!parseGitHubUrl(urlInput.value.trim()) && urlInput.value.trim().length > 0);
+  syncCheckButton();
   clearError();
 });
-urlInput.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !$('#analyze').disabled) startGitHub(); });
-$('#analyze').addEventListener('click', startGitHub);
+urlInput.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !$('#analyze').disabled) startCheck(); });
+$('#analyze').addEventListener('click', startCheck);
 function startGitHub() { run(() => loadFromGitHub(urlInput.value.trim(), $('#token').value.trim(), setPhase)); }
+// Check dispatch: staged pasted snippets win; otherwise it's a GitHub URL.
+function startCheck() {
+  if (attachments.length) { const items = attachments.map((a) => ({ name: a.name, text: a.text })); run(() => Promise.resolve(loadFromPastes(items))); return; }
+  if (parseGitHubUrl(urlInput.value.trim())) startGitHub();
+}
 
-// Paste-to-analyze: paste a link or code anywhere on the input screen (not while
-// typing in a field) and it just goes.
+// Paste anywhere on the input screen. A paste over the word limit becomes an attachment
+// chip (so the field never fills with a wall of code) — regardless of whether a field is
+// focused. Below the limit, behaviour is unchanged: inside the url/token field the text
+// just types; outside any field a link runs and a short snippet auto-analyzes.
 window.addEventListener('paste', (e) => {
   if (card.dataset.state !== 'input') return;
-  const t = e.target;
-  if (t && (t.id === 'url' || t.id === 'token')) return; // let the field handle it
   const text = (e.clipboardData || window.clipboardData)?.getData('text') || '';
   if (!text.trim()) return;
+  if (wordsExceed(text, PASTE_WORD_LIMIT)) { e.preventDefault(); addPasteAttachment(text); return; }
+  const t = e.target;
+  if (t && (t.id === 'url' || t.id === 'token')) return; // short paste in a field — let it type
   e.preventDefault();
-  if (parseGitHubUrl(text.trim())) { urlInput.value = text.trim(); run(() => loadFromGitHub(text.trim(), $('#token').value.trim(), setPhase)); }
+  const trimmed = text.trim();
+  if (parseGitHubUrl(trimmed)) { urlInput.value = trimmed; syncCheckButton(); run(() => loadFromGitHub(trimmed, $('#token').value.trim(), setPhase)); }
   else run(() => Promise.resolve(loadFromPaste(text)));
 });
 
@@ -283,6 +358,49 @@ function finalizeRead(run) {
   recordCheck(lastResult);
 }
 
+// ---- Off-thread scan -------------------------------------------------------
+// The corpus scan (extractFactsCore) is the one heavy step; on a large paste it can run
+// for seconds. We hand it to a Worker so the UI thread — and the "Reading your tool…"
+// animation — stays smooth, then rebuild the cheap evOf closure on the main thread with
+// hydrateFacts. Everything degrades to a plain synchronous scan if the Worker is
+// unavailable for any reason, so the engine's behaviour is identical either way.
+let scanWorker = null;
+let workerBroken = false;   // once a worker hard-fails, stop trying it for the session
+let workerSeq = 0;
+function getScanWorker() {
+  if (workerBroken) return null;
+  if (scanWorker) return scanWorker;
+  try {
+    scanWorker = new Worker(new URL('./engine/scan-worker.js', import.meta.url), { type: 'module' });
+    scanWorker.addEventListener('error', () => { workerBroken = true; try { scanWorker.terminate(); } catch {} scanWorker = null; });
+    return scanWorker;
+  } catch { workerBroken = true; return null; }
+}
+function extractFactsViaWorker(corpus) {
+  return new Promise((resolveP, rejectP) => {
+    const w = getScanWorker();
+    if (!w) { rejectP(new Error('no worker')); return; }
+    const id = ++workerSeq;
+    const cleanup = () => { w.removeEventListener('message', onMsg); w.removeEventListener('error', onErr); };
+    const onMsg = (e) => {
+      if (!e.data || e.data.id !== id) return;   // ignore results from a superseded run
+      cleanup();
+      if (e.data.ok) resolveP(e.data.core); else rejectP(new Error(e.data.error || 'worker scan failed'));
+    };
+    const onErr = (err) => { cleanup(); workerBroken = true; rejectP(err); };
+    w.addEventListener('message', onMsg);
+    w.addEventListener('error', onErr);
+    try { w.postMessage({ id, corpus }); } catch (err) { cleanup(); rejectP(err); }
+  });
+}
+async function analyzeFacts(corpus) {
+  try {
+    return hydrateFacts(await extractFactsViaWorker(corpus));
+  } catch {
+    return extractFacts(corpus); // synchronous fallback — identical result, just on this thread
+  }
+}
+
 async function run(loader) {
   clearError();
   overrides = {};
@@ -298,7 +416,7 @@ async function run(loader) {
     const loaded = await loader();
     if (!loaded || !loaded.files || !loaded.files.length) throw new Error('No readable code files were found. Try a different repo, folder, or paste a snippet.');
     corpus = loaded;
-    cachedFacts = extractFacts(corpus); // scan once; what-if toggles reuse this
+    cachedFacts = await analyzeFacts(corpus); // scan once (off-thread for big pastes); what-if toggles reuse this
     // The read works the un-inferable judgments in the background. We hold the
     // reveal a short beat so the first answer is usually already settled; if the
     // read is slower (a local model), we reveal the engine's read now and let the
@@ -434,12 +552,9 @@ function renderResult() {
   }));
 }
 
-// The privacy line, phrased by where the read actually runs — never mentioning a
-// model. A local read stays on the device; otherwise the code is sent to a server
-// to be read (and we don't over-claim what happens to it there).
+// The privacy line — never names a model. Cloud-only: the code is sent to the
+// hosted reader to be read (and we don't over-claim what happens to it there).
 function privacyLine() {
-  const p = aiAvailable && aiAvailable.provider;
-  if (p === 'local') return 'Read-only · checked privately on your device.';
   return 'Read-only · your code is only ever read, never changed.';
 }
 
@@ -767,6 +882,7 @@ function reset() {
   setState('input');
   resetFooter();
   urlInput.value = ''; $('#analyze').disabled = true;
+  attachments = []; renderAttachments();
   $('#dropzone').classList.remove('valid');
   $('#token-row').classList.remove('open');
   clearError();
@@ -784,7 +900,6 @@ function reset() {
 const TOOLS = [
   { id: 'validator', label: 'Validator', enabled: true, icon: '<circle cx="11" cy="11" r="7"/><path d="M16 16l4.5 4.5"/>' },
   { id: 'history', label: 'History', enabled: false, icon: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>' },
-  { id: 'library', label: 'Library', enabled: false, icon: '<rect x="4" y="4" width="6.2" height="16" rx="1.4"/><rect x="13.8" y="4" width="6.2" height="16" rx="1.4"/>' },
   { id: 'docs', label: 'Docs', enabled: false, icon: '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/><path d="M9 13h6M9 16h5"/>' },
 ];
 
@@ -831,20 +946,28 @@ function applyTheme(mode) {
 const APP_VERSION = '1.0.0';
 
 const SET_ICON = {
+  account: '<circle cx="12" cy="8.2" r="3.6"/><path d="M5.5 20a6.5 6.5 0 0 1 13 0"/>',
   appearance: '<circle cx="12" cy="12" r="4"/><path d="M12 3v2M12 19v2M21 12h-2M5 12H3M18.4 5.6l-1.4 1.4M7 17l-1.4 1.4M18.4 18.4 17 17M7 7 5.6 5.6"/>',
+  intelligence: '<path d="M12 4l1.8 5.2L19 11l-5.2 1.8L12 18l-1.8-5.2L7 11l5.2-1.8z"/><path d="M18 4.5l.6 1.7 1.7.6-1.7.6L18 9.6l-.6-1.7L15.7 7.3l1.7-.6z"/>',
   privacy: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/>',
   about: '<circle cx="12" cy="12" r="9"/><path d="M12 11.5v5"/><circle cx="12" cy="7.8" r="1" fill="currentColor" stroke="none"/>',
 };
 
 const SETTINGS_SECTIONS = [
-  { id: 'appearance', label: 'Appearance',      render: renderSetAppearance },
-  { id: 'privacy',    label: 'Privacy & data',  render: renderSetPrivacy },
-  { id: 'about',      label: 'About',           render: renderSetAbout },
+  ...(cloudConfigured() ? [{ id: 'account', label: 'Account', render: renderSetAccount }] : []),
+  { id: 'appearance',   label: 'Appearance',      render: renderSetAppearance },
+  { id: 'intelligence', label: 'Intelligence',    render: renderSetAI },
+  { id: 'privacy',      label: 'Privacy & data',  render: renderSetPrivacy },
+  { id: 'about',        label: 'About',           render: renderSetAbout },
 ];
 
 let setOverlay = null;        // the lazily-built overlay element (reused)
 let setReturnFocus = null;    // element to restore focus to on close
 let setActive = 'appearance'; // remembered section across opens
+let aiRechecking = false;     // transient: re-pinging the reader for a live status
+let authBusy = false;         // transient: a sign-in / sign-up request is in flight
+let authMsg = null;           // {kind:'error'|'ok', text} feedback under the form
+let authEmail = '';           // preserve the typed email across a re-render
 
 function buildSettings() {
   const ov = document.createElement('div');
@@ -885,8 +1008,11 @@ function buildSettings() {
     const themeBtn = e.target.closest('button[data-theme]');
     if (themeBtn) { applyTheme(themeBtn.dataset.theme); return; }
     const act = e.target.closest('[data-act]')?.dataset.act;
-    if (act === 'clear-recents') { store.set('recents', []); renderSidebar(); renderSettingsBody(); }
+    if (act === 'clear-recents') { clearRecents(); }
     else if (act === 'open-playbook') { closeSettings(); setBottom(true); }
+    else if (act === 'recheck-ai') recheckAI();
+    else if (act === 'sign-in' || act === 'sign-up') doAuth(act);
+    else if (act === 'sign-out') doSignOut();
   });
   return ov;
 }
@@ -897,6 +1023,7 @@ function openSettings() {
   setOverlay.hidden = false;
   shell.setAttribute('inert', '');     // park the app behind the modal
   renderSettingsBody();
+  if (setActive === 'intelligence') recheckAI();   // confirm the reader is live, this moment
   requestAnimationFrame(() => setOverlay.querySelector(`.set-navitem[data-sec="${setActive}"]`)?.focus());
 }
 function closeSettings() {
@@ -910,6 +1037,7 @@ function selectSettings(id) {
   setActive = id;
   renderSettingsBody();
   setOverlay?.querySelector('#set-content')?.focus();
+  if (id === 'intelligence') recheckAI();   // confirm the reader is live, this moment
 }
 function renderSettingsBody() {
   if (!setOverlay) return;
@@ -924,6 +1052,123 @@ function renderSettingsBody() {
   host.scrollTop = 0;
   // re-sync the shared controls so the freshly rendered pane reflects live state
   applyTheme(store.get('theme', 'auto'));
+}
+
+// ---- Account — optional cloud sign-in --------------------------------------
+// Lane works fully without an account (everything stays on this device). Signing
+// in turns on cloud sync: your check history and saved files follow you across
+// devices, walled off to your account by row-level security on the server.
+function renderSetAccount() {
+  const u = currentUser();
+  const msg = authMsg
+    ? `<p class="set-foot ${authMsg.kind === 'error' ? 'set-foot-err' : ''}">${esc(authMsg.text)}</p>` : '';
+  if (u) {
+    return `
+    <div class="set-pane">
+      <h3 class="set-h">Account</h3>
+      <p class="set-sub">You're signed in. Your check history and saved files sync to your account.</p>
+      <div class="set-card">
+        <div class="set-row">
+          <div class="set-rl">
+            <div class="set-rt">Signed in</div>
+            <div class="set-rd">${esc(u.email || 'your account')}</div>
+          </div>
+          <span class="set-status live"><span class="sdot" aria-hidden="true"></span>Synced</span>
+        </div>
+        <div class="set-row set-row-foot">
+          <button class="set-btn" type="button" data-act="sign-out" ${authBusy ? 'disabled' : ''}>${authBusy ? 'Signing out…' : 'Sign out'}</button>
+        </div>
+      </div>
+      ${msg}
+      <p class="set-foot">Sign out and Lane goes back to keeping everything on this device only.</p>
+    </div>`;
+  }
+  return `
+    <div class="set-pane">
+      <h3 class="set-h">Account</h3>
+      <p class="set-sub">Optional. Sign in to sync your history and saved files across devices. Without an account, everything stays on this device.</p>
+      <div class="set-card">
+        <div class="set-field">
+          <label class="set-rt" for="auth-email">Email</label>
+          <input class="set-input" type="email" id="auth-email" autocomplete="email" placeholder="you@example.com" value="${esc(authEmail)}" ${authBusy ? 'disabled' : ''} />
+        </div>
+        <div class="set-field">
+          <label class="set-rt" for="auth-pass">Password</label>
+          <input class="set-input" type="password" id="auth-pass" autocomplete="current-password" placeholder="••••••••" ${authBusy ? 'disabled' : ''} />
+        </div>
+        <div class="set-row set-row-foot set-row-auth">
+          <button class="set-btn primary" type="button" data-act="sign-in" ${authBusy ? 'disabled' : ''}>${authBusy ? 'Working…' : 'Sign in'}</button>
+          <button class="set-btn" type="button" data-act="sign-up" ${authBusy ? 'disabled' : ''}>Create account</button>
+        </div>
+      </div>
+      ${msg}
+      <p class="set-foot">Your code is still only ever read, never changed. Saving syncs your file and its result to your private account — nothing is shared with anyone else.</p>
+    </div>`;
+}
+
+// Run a sign-in or sign-up from the Account pane, then reflect the new state.
+async function doAuth(kind) {
+  if (authBusy) return;
+  const emailEl = setOverlay?.querySelector('#auth-email');
+  const passEl = setOverlay?.querySelector('#auth-pass');
+  const email = (emailEl?.value || '').trim();
+  const password = passEl?.value || '';
+  authEmail = email;
+  if (!email || !password) { authMsg = { kind: 'error', text: 'Enter an email and password.' }; renderSettingsBody(); return; }
+  authBusy = true; authMsg = null; renderSettingsBody();
+  try {
+    if (kind === 'sign-up') {
+      const { needsConfirm } = await signUp(email, password);
+      if (needsConfirm) authMsg = { kind: 'ok', text: 'Account created — check your email to confirm, then sign in.' };
+    } else {
+      await signIn(email, password);
+    }
+  } catch (e) {
+    authMsg = { kind: 'error', text: friendlyAuthError(e) };
+  }
+  authBusy = false;
+  if (isSignedIn()) { authEmail = ''; authMsg = null; }
+  syncAvatar();
+  renderSettingsBody();
+  await loadRecents();          // pull this account's history (or fall back to local)
+}
+
+async function doSignOut() {
+  if (authBusy) return;
+  authBusy = true; renderSettingsBody();
+  try { await signOut(); } catch {}
+  authBusy = false; authMsg = null;
+  renderSettingsBody();
+  syncAvatar();
+  await loadRecents();
+}
+
+function friendlyAuthError(e) {
+  const m = String(e?.message || e || '').toLowerCase();
+  if (e?.status === 429 || m.includes('rate limit') || m.includes('too many')) return 'Too many attempts — wait a minute and try again.';
+  if (m.includes('not confirmed')) return 'Check your email to confirm this account, then sign in.';
+  if (m.includes('invalid login') || m.includes('invalid credentials')) return 'That email and password don\'t match.';
+  if (m.includes('already registered') || m.includes('already exists')) return 'That email already has an account — try signing in.';
+  if (m.includes('invalid') && m.includes('email')) return 'That doesn\'t look like a valid email.';
+  if (m.includes('password')) return 'Password must be at least 6 characters.';
+  return e?.message || 'Something went wrong. Try again.';
+}
+
+// Reflect signed-in state on the rail avatar (a small dot) and its tooltip.
+function syncAvatar() {
+  const btn = $('#account-btn'); if (!btn) return;
+  const u = currentUser();
+  btn.dataset.signed = u ? 'true' : 'false';
+  btn.setAttribute('aria-label', u ? `Account · ${u.email || 'signed in'}` : 'Account · sign in');
+  const tip = btn.querySelector('.tip');
+  if (tip) tip.textContent = u ? (u.email || 'Account') : 'Account';
+}
+
+// The avatar opens Settings on the Account section (sign-in form or signed-in state).
+function openAccount() {
+  if (!cloudConfigured()) { openSettings(); return; }
+  setActive = 'account';
+  openSettings();
 }
 
 function renderSetAppearance() {
@@ -947,25 +1192,125 @@ function renderSetAppearance() {
     </div>`;
 }
 
-function renderSetPrivacy() {
-  const n = store.get('recents', []).length;
-  const local = (aiAvailable && aiAvailable.provider) === 'local';
+// ---- Intelligence — the live status of the model that reads the code --------
+// Settings is the one place the model is named: a curious user can confirm it's
+// reachable and working, without the read ever being marketed in the main flow.
+// Everything here is derived from the real /api/llm/health probe (aiAvailable),
+// so "Live" means a reader actually answered — not a hard-coded label.
+
+// Turn a backend model id into a calm, human label. The local key is reliable;
+// hosted ids vary, so we map the ones we ship and fall back to a clean generic.
+function prettyModel(id) {
+  if (!id) return '';
+  const s = String(id).toLowerCase();
+  if (s.includes('gemma')) return 'Gemma (4B)';
+  if (s.includes('llama-3.3-70b') || s.includes('llama3.3')) return 'Llama 3.3 (70B)';
+  if (s.includes('llama-4-scout')) return 'Llama 4 Scout';
+  if (s.includes('mistral')) return 'Mistral Small (24B)';
+  if (s.includes('qwen')) return 'Qwen 2.5 Coder (32B)';
+  return id.replace(/^@?[^/]+\//, '').replace(/:.*/, '').replace(/[-_]/g, ' ').trim();
+}
+
+// One presentation object for the Intelligence pane, read off aiAvailable.
+// Cloud-only: every read runs on the hosted Cloudflare reader, so `live` just
+// means that reader answered the health probe. `provider` is 'cloud' (local dev
+// server) or 'cloudflare' (deployed app) — both the same hosted reader.
+function aiStatusModel() {
+  const provider = aiAvailable && aiAvailable.provider;   // 'cloud' | 'cloudflare' | null
+  const live = !!provider;                                // the hosted reader answered
+  let statusClass, statusLabel, statusDesc;
+  if (aiRechecking) {
+    statusClass = 'checking'; statusLabel = 'Checking…';
+    statusDesc = 'Reaching the model to confirm it answers.';
+  } else if (live) {
+    statusClass = 'live'; statusLabel = 'Live';
+    statusDesc = 'The cloud reader answered just now — ready to read your code.';
+  } else {
+    statusClass = 'off'; statusLabel = 'Rules only';
+    statusDesc = 'The cloud reader isn’t answering right now. Checks still run in full on the built-in rules.';
+  }
+  const whereLabel = live ? 'Cloud' : 'Built-in rules';
+  const whereDesc = live
+    ? 'Your code is sent to a hosted model to be read once, then discarded — never stored or changed.'
+    : 'The deterministic rules run entirely in your browser.';
+  const rawModel = aiAvailable && aiAvailable.model;
+  const pretty = esc(prettyModel(rawModel));
+  const namedModel = pretty && pretty !== 'Gemma (4B)' && !/cloudflare/i.test(String(rawModel || ''));
+  let modelDesc;
+  if (live) modelDesc = namedModel
+    ? `${pretty} · served on Cloudflare Workers AI.`
+    : 'A hosted open model, served on Cloudflare Workers AI.';
+  else modelDesc = 'No model answering — the rules engine decides on its own.';
+  return { statusClass, statusLabel, statusDesc, whereLabel, whereDesc, modelDesc };
+}
+
+function renderSetAI() {
+  const a = aiStatusModel();
   return `
     <div class="set-pane">
-      <h3 class="set-h">Privacy &amp; data</h3>
-      <p class="set-sub">There is no account, and your code is only ever read to score it — never changed.</p>
+      <h3 class="set-h">Intelligence</h3>
+      <p class="set-sub">Lane reads your code with a small AI model. Here's what it's using and whether it's live right now — the built-in rules always make the final call.</p>
       <div class="set-card">
         <div class="set-row">
           <div class="set-rl">
-            <div class="set-rt">${local ? 'On-device' : 'Read-only'}</div>
-            <div class="set-rd">${local ? 'Your code is read on this device and is not uploaded.' : 'Your code is read to score it, then discarded — never stored.'}</div>
+            <div class="set-rt">Status</div>
+            <div class="set-rd">${a.statusDesc}</div>
+          </div>
+          <span class="set-status ${a.statusClass}"><span class="sdot" aria-hidden="true"></span>${esc(a.statusLabel)}</span>
+        </div>
+        <div class="set-row">
+          <div class="set-rl">
+            <div class="set-rt">Where it runs</div>
+            <div class="set-rd">${a.whereDesc}</div>
+          </div>
+          <span class="set-badge alt">${esc(a.whereLabel)}</span>
+        </div>
+        <div class="set-row">
+          <div class="set-rl">
+            <div class="set-rt">Model</div>
+            <div class="set-rd">${a.modelDesc}</div>
+          </div>
+        </div>
+        <div class="set-row set-row-foot">
+          <button class="set-btn" type="button" data-act="recheck-ai" ${aiRechecking ? 'disabled' : ''}>${aiRechecking ? 'Checking…' : 'Check again'}</button>
+        </div>
+      </div>
+      <p class="set-foot">However it reads, the built-in rules make the call. The model only fills in judgment the code can't show on its own — and it can add caution, never remove it.</p>
+    </div>`;
+}
+
+// Re-ping the reader so the Intelligence pane shows a live, this-moment status.
+// Shared with the privacy line (which also phrases itself by where the read runs).
+async function recheckAI() {
+  if (aiRechecking) return;
+  aiRechecking = true;
+  if (setOverlay && !setOverlay.hidden && setActive === 'intelligence') renderSettingsBody();
+  try { aiAvailable = await checkAvailable(); } catch { aiAvailable = null; }
+  aiRechecking = false;
+  if (card.dataset.state === 'input') resetFooter();   // refresh the idle privacy line
+  if (setOverlay && !setOverlay.hidden && (setActive === 'intelligence' || setActive === 'privacy')) renderSettingsBody();
+}
+
+function renderSetPrivacy() {
+  const n = recentsCache.length;
+  const signedIn = isSignedIn();
+  const where = signedIn ? 'in your account' : 'on this device';
+  return `
+    <div class="set-pane">
+      <h3 class="set-h">Privacy &amp; data</h3>
+      <p class="set-sub">Your code is only ever read to score it — never changed. ${signedIn ? 'Your history and saved files sync to your private account.' : 'Without an account, everything stays on this device.'}</p>
+      <div class="set-card">
+        <div class="set-row">
+          <div class="set-rl">
+            <div class="set-rt">Read-only</div>
+            <div class="set-rd">Your code is read to score it, then discarded — never stored.</div>
           </div>
           <span class="set-badge">Read-only</span>
         </div>
         <div class="set-row">
           <div class="set-rl">
             <div class="set-rt">Recent checks</div>
-            <div class="set-rd">${n ? `${n} check${n === 1 ? '' : 's'} remembered on this device.` : 'Nothing saved yet.'}</div>
+            <div class="set-rd">${n ? `${n} check${n === 1 ? '' : 's'} remembered ${where}.` : 'Nothing saved yet.'}</div>
           </div>
           <button class="set-btn danger" type="button" data-act="clear-recents" ${n ? '' : 'disabled'}>Clear history</button>
         </div>
@@ -1019,14 +1364,45 @@ function resetFooter() {
   $('#foot-conf').textContent = '';
 }
 
-// ---- recents (the History seam) — a lightweight record per check, never code -
+// ---- recents (the History seam) — a lightweight record per check, never code --
+// Signed in, the history lives in the user's cloud account (the `checks` table) so
+// it follows them across devices. Signed out, it stays in localStorage on this
+// device. `recentsCache` mirrors whichever is active so the sidebar can render
+// synchronously; loadRecents() refreshes it whenever the source changes.
+let recentsCache = store.get('recents', []);
+
+async function loadRecents() {
+  if (isSignedIn()) {
+    try { recentsCache = await listChecks(50); }
+    catch { recentsCache = []; }
+  } else {
+    recentsCache = store.get('recents', []);
+  }
+  renderSidebar();
+  if (setOverlay && !setOverlay.hidden && (setActive === 'privacy' || setActive === 'account')) renderSettingsBody();
+}
+
+async function clearRecents() {
+  if (isSignedIn()) { try { await clearChecks(); } catch {} }
+  else store.set('recents', []);
+  recentsCache = [];
+  renderSidebar();
+  if (setOverlay && !setOverlay.hidden) renderSettingsBody();
+}
+
 function recordCheck(r) {
   if (!r) return;
-  const list = store.get('recents', []);
-  list.unshift({ slug: slugOf(r), source: r.meta.source, verdict: r.verdict.key,
-    confidence: (r.confidence || {}).level || 'high' });
-  store.set('recents', list.slice(0, 50));
+  const rec = { slug: slugOf(r), source: r.meta.source, verdict: r.verdict.key,
+    confidence: (r.confidence || {}).level || 'high' };
+  // optimistic: show it immediately, then persist to the active backend
+  recentsCache = [rec, ...recentsCache].slice(0, 50);
   if (shell.dataset.side === 'open') renderSidebar();
+  if (isSignedIn()) { insertCheck(rec).catch(() => {}); }
+  else {
+    const list = store.get('recents', []);
+    list.unshift(rec);
+    store.set('recents', list.slice(0, 50));
+  }
 }
 
 // ============================================================================
@@ -1050,7 +1426,7 @@ function setBottom(open) {
 const RECENT_LABEL = { lane1: 'Ready to host', lane2: 'Hand to a developer', approve: 'Needs a sign-off' };
 function renderSidebar() {
   const host = $('#side-body'); if (!host) return;
-  const list = store.get('recents', []);
+  const list = recentsCache;
   if (!list.length) {
     host.innerHTML = `<div class="side-empty">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>
@@ -1063,7 +1439,7 @@ function renderSidebar() {
       <span class="rtx"><span class="rslug">${esc(r.slug)}</span><span class="rmeta">${esc(RECENT_LABEL[r.verdict] || '')}${r.confidence && r.confidence !== 'high' ? ` · ${esc(r.confidence)} confidence` : ''}</span></span>
     </div>`).join('')
     + `<button class="side-clear" id="side-clear" type="button">Clear history</button>`;
-  $('#side-clear')?.addEventListener('click', () => { store.set('recents', []); renderSidebar(); });
+  $('#side-clear')?.addEventListener('click', () => { clearRecents(); });
 }
 
 // Learn where the read will run (local vs hosted) so the privacy line can be
@@ -1072,7 +1448,7 @@ function renderSidebar() {
 async function initRead() {
   try { aiAvailable = await checkAvailable(); } catch { aiAvailable = null; }
   if (card.dataset.state === 'input') resetFooter();   // refresh the idle privacy line
-  if (setOverlay && !setOverlay.hidden && setActive === 'privacy') renderSettingsBody();
+  if (setOverlay && !setOverlay.hidden && (setActive === 'intelligence' || setActive === 'privacy')) renderSettingsBody();
 }
 
 // ---- wire the shell once ---------------------------------------------------
@@ -1086,6 +1462,7 @@ function initShell() {
   const toggleOpts = () => { const open = optsMenu.hidden; optsMenu.hidden = !open; optsBtn.setAttribute('aria-expanded', String(open)); };
   optsBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleOpts(); });
   $('#settings-btn')?.addEventListener('click', (e) => { e.stopPropagation(); closeOpts(); openSettings(); });
+  $('#account-btn')?.addEventListener('click', (e) => { e.stopPropagation(); closeOpts(); openAccount(); });
   optsMenu.addEventListener('click', (e) => e.stopPropagation());
   document.addEventListener('click', closeOpts);
   $('#theme-seg')?.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => applyTheme(b.dataset.theme)));
@@ -1109,6 +1486,18 @@ function initShell() {
   if (store.get('panel.side', false)) setSidebar(true);
   if (store.get('panel.bottom', false)) setBottom(true);
   if (store.get('panel.dock', false)) openDrawer();
+
+  // optional cloud: resolve any persisted session, then keep the UI in step with it
+  initCloud();
+}
+
+// Resolve the saved session (if cloud is configured) and react to sign-in/out.
+async function initCloud() {
+  if (!cloudConfigured()) return;
+  onAuth(() => { syncAvatar(); loadRecents(); });   // session refresh / token expiry
+  try { await initAuth(); } catch {}
+  syncAvatar();
+  await loadRecents();   // signed in → pull cloud history; signed out → local
 }
 
 initShell();

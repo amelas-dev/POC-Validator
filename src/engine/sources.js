@@ -334,15 +334,48 @@ export async function loadFromZip(file, onProgress = () => {}) {
 // Pasted code
 // ---------------------------------------------------------------------------
 
+// Guess a sensible filename (with extension) for a pasted blob from its first chunk only —
+// the language signature is always near the top, so we never scan a multi-MB paste here.
+export function guessPasteName(text, filename = 'pasted-snippet') {
+  if (/\.\w+$/.test(filename)) return filename;
+  const head = String(text || '').slice(0, 4096);
+  const guessHtml = /<!doctype html|<html|<script|<\/div>/i.test(head);
+  const guessPy = /^\s*(import |from .+ import|def |class )/m.test(head);
+  return `${filename}.${guessHtml ? 'html' : guessPy ? 'py' : 'js'}`;
+}
+
 export function loadFromPaste(text, filename = 'pasted-snippet') {
   const t = String(text || ''); // coerce once, then use everywhere (no .length off a raw null)
-  const guessHtml = /<!doctype html|<html|<script|<\/div>/i.test(t);
-  const guessPy = /^\s*(import |from .+ import|def |class )/m.test(t);
-  const path = /\.\w+$/.test(filename)
-    ? filename
-    : `${filename}.${guessHtml ? 'html' : guessPy ? 'py' : 'js'}`;
+  const path = guessPasteName(t, filename);
   return normalizeCorpus(
     [{ path, text: t, bytes: t.length, truncated: false }],
     { source: 'paste', label: 'Pasted snippet', meta: {}, notes: [] },
   );
+}
+
+// Build a corpus from one or more pasted snippets — each becomes its own file. This backs
+// the input bar's "large paste → attachment" path, where a user can stack several pastes
+// before checking. Generated paths are de-duplicated so two unnamed snippets don't collide.
+export function loadFromPastes(items) {
+  const list = (Array.isArray(items) ? items : [items]).filter((it) => it && String(it.text || '').length);
+  if (!list.length) return normalizeCorpus([], { source: 'paste', label: 'Pasted snippet', meta: {}, notes: [] });
+  const seen = new Set();
+  const files = list.map((it, i) => {
+    let path = guessPasteName(it.text, it.name || `pasted-${i + 1}`);
+    if (seen.has(path)) {
+      const dot = path.lastIndexOf('.');
+      const stem = dot > 0 ? path.slice(0, dot) : path;
+      const extn = dot > 0 ? path.slice(dot) : '';
+      let n = 2; while (seen.has(`${stem}-${n}${extn}`)) n++;
+      path = `${stem}-${n}${extn}`;
+    }
+    seen.add(path);
+    const t = String(it.text);
+    return { path, text: t, bytes: t.length, truncated: false };
+  });
+  return normalizeCorpus(files, {
+    source: 'paste',
+    label: files.length === 1 ? 'Pasted snippet' : `${files.length} pasted snippets`,
+    meta: {}, notes: [],
+  });
 }

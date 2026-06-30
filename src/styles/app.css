@@ -219,10 +219,20 @@ body { overflow: hidden; }   /* the shell owns the viewport; only .main scrolls 
 .rail-btn:focus-visible .tip { opacity: 1; transform: translateY(-50%) translateX(0); }
 
 .avatar {
-  width: 30px; height: 30px; border-radius: 50%; flex: none;
+  position: relative; width: 30px; height: 30px; border-radius: 50%; flex: none; border: none; cursor: pointer;
   display: grid; place-items: center; background: var(--vista); color: var(--brown);
   font-family: var(--font-display); font-size: 10px; font-weight: 600; letter-spacing: 0.06em;
+  transition: background 0.15s, color 0.15s;
 }
+.avatar:hover { color: var(--ink); background: var(--hover); }
+/* signed-in: graphite fill + a small "synced" dot on the corner */
+.avatar[data-signed="true"] { background: var(--brand); color: var(--white); }
+.avatar[data-signed="true"]::after {
+  content: ""; position: absolute; right: -1px; bottom: -1px; width: 9px; height: 9px;
+  border-radius: 50%; background: var(--ready); border: 2px solid var(--chrome-bg);
+}
+.avatar .tip { text-transform: none; letter-spacing: 0.02em; }
+.avatar:hover .tip, .avatar:focus-visible .tip { opacity: 1; transform: translateY(-50%) translateX(0); }
 
 /* ---- Region B · Tool header ------------------------------------------ */
 .toolhead {
@@ -337,6 +347,35 @@ body { overflow: hidden; }   /* the shell owns the viewport; only .main scrolls 
 .go:not(:disabled) { opacity: 1; }
 .go:not(:disabled):hover { background: var(--brand-press); transform: translateY(-1px); }
 .go:not(:disabled):active { transform: scale(0.98); }
+
+/* Pasted-snippet attachments — a large paste collapses into a chip instead of flooding the
+   input bar. Token-driven, so dark mode is automatic. */
+.attachments {
+  list-style: none; margin: 10px 0 0; padding: 0;
+  display: flex; flex-wrap: wrap; gap: 8px;
+}
+.attachments[hidden] { display: none; }
+.chip {
+  display: inline-flex; align-items: center; gap: 9px; max-width: 100%;
+  background: var(--white); border: 1px solid var(--vista); border-radius: 11px;
+  padding: 7px 8px 7px 11px;
+  animation: chip-in 0.2s var(--ease);
+}
+@keyframes chip-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+.chip-ico { flex: none; width: 17px; height: 17px; color: var(--muted); }
+.chip-body { min-width: 0; display: flex; flex-direction: column; line-height: 1.25; }
+.chip-name {
+  font-family: var(--font-ui); font-size: 13px; font-weight: 600; color: var(--ink);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px;
+}
+.chip-meta { font-size: 11px; color: var(--muted); }
+.chip-x {
+  flex: none; width: 22px; height: 22px; border: none; border-radius: 7px;
+  display: grid; place-items: center; background: none; color: var(--muted); cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.chip-x:hover { background: var(--hover); color: var(--ink); }
+.chip-x svg { width: 13px; height: 13px; }
 .go:disabled { cursor: default; }
 
 .aux { display: flex; align-items: center; gap: 14px; margin-top: 16px; font-size: 13.5px; }
@@ -924,6 +963,19 @@ button.set-row:hover { background: var(--hover); }
 .set-btn.danger:hover:not(:disabled) { background: color-mix(in srgb, var(--error-ink) 10%, var(--white)); }
 
 .set-badge { font-family: var(--font-display); font-size: 10px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ready); background: var(--ready-glow); border-radius: 7px; padding: 5px 9px; flex: none; }
+.set-badge.alt { color: var(--muted); background: var(--hover); }
+
+/* Intelligence — a live status pill driven by the real /api/llm/health probe */
+.set-status { display: inline-flex; align-items: center; gap: 7px; font-family: var(--font-display); font-size: 10px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; border-radius: 7px; padding: 5px 10px; flex: none; white-space: nowrap; }
+.set-status .sdot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: currentColor; }
+.set-status.live { color: var(--ready); background: var(--ready-glow); }
+.set-status.live .sdot { animation: set-pulse 2s var(--ease) infinite; }
+.set-status.checking { color: var(--developer); background: var(--developer-glow); }
+.set-status.checking .sdot { animation: set-blink 1s linear infinite; }
+.set-status.off { color: var(--soft); background: var(--hover); }
+@keyframes set-pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ready) 55%, transparent); } 70% { box-shadow: 0 0 0 6px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+@keyframes set-blink { 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { .set-status .sdot { animation: none; } }
 
 .set-about { display: flex; align-items: center; gap: 15px; padding: 17px; }
 .set-about-mark { width: 42px; height: 42px; border-radius: 11px; background: var(--brand); color: var(--white); display: grid; place-items: center; flex: none; }
@@ -931,6 +983,22 @@ button.set-row:hover { background: var(--hover); }
 .set-about-tx { flex: 1; min-width: 0; }
 .set-ver { font-family: var(--mono); font-size: 11px; color: var(--soft); flex: none; align-self: flex-start; }
 .set-foot { font-size: 12px; line-height: 1.5; color: var(--soft); margin: 4px 2px 0; }
+.set-foot-err { color: var(--error-ink); }
+
+/* Account — sign-in form fields */
+.set-field { display: flex; flex-direction: column; gap: 6px; padding: 14px 17px; border-top: 1px solid var(--hairline); }
+.set-field:first-child { border-top: none; }
+.set-input {
+  font: inherit; font-size: 14px; width: 100%; box-sizing: border-box;
+  background: var(--canvas); border: 1px solid var(--vista); border-radius: 9px; padding: 9px 11px; color: var(--ink);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.set-input::placeholder { color: var(--soft); }
+.set-input:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 14%, transparent); }
+.set-input:disabled { opacity: 0.55; }
+.set-row-auth { display: flex; gap: 9px; padding: 14px 17px; border-top: 1px solid var(--hairline); }
+.set-btn.primary { background: var(--brand); color: var(--white); border-color: var(--brand); }
+.set-btn.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--brand) 86%, var(--white)); }
 
 /* phone: the section sidebar collapses to a scrollable icon strip on top */
 @media (max-width: 640px) {

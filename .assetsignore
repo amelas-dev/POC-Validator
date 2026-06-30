@@ -4,6 +4,7 @@
 # tests, configs, and docs are not part of the front-end.
 /functions/
 /test/
+/supabase/
 /.git/
 node_modules/
 worker.js

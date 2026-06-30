@@ -16,20 +16,14 @@ const ROOT = fileURLToPath(new URL('.', import.meta.url));
 const PORT = Number(process.env.PORT) || 4173;
 
 // ---- Reading engine (model proxy) ------------------------------------------
-// The browser talks only to its own origin; this proxy forwards the read to a
-// LOCAL Ollama daemon when one is running, so the analysis stays on-machine.
-// If no local model is reachable, it transparently forwards to the hosted
-// reader instead, so the app always produces a full read — the user never has
-// to install or configure anything. Local is always preferred (private); the
-// hosted path is a silent fallback.
-const OLLAMA = (process.env.OLLAMA_HOST || 'http://localhost:11434').replace(/\/$/, '');
-// Hosted reader (Cloudflare Workers AI), used only when no local model answers.
-// Speaks the same request/response envelope this proxy does, so the fallback is
-// invisible to the frontend. Override with READER_FALLBACK to point elsewhere.
+// Cloud-only: the browser talks only to its own origin, and this proxy forwards
+// every read to the hosted Cloudflare Workers AI reader. There is no on-device
+// path — the user never has to install, pull, or run a local model.
+// Hosted reader (Cloudflare Workers AI). Override with READER_FALLBACK to point
+// elsewhere; set READER_FALLBACK=off to disable the reader entirely.
 const FALLBACK = (process.env.READER_FALLBACK || 'https://pocai.alexmelas.workers.dev').replace(/\/$/, '');
 const FALLBACK_ENABLED = process.env.READER_FALLBACK !== 'off';
 const ALLOWED_MODELS = new Set(['gemma4:e4b', 'gemma4:26b']);
-const LLM_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS) || 120000; // warm-up + rare tail; client retries once
 const FALLBACK_TIMEOUT_MS = Number(process.env.READER_FALLBACK_TIMEOUT_MS) || 55000;
 const LLM_MAX_BODY = 2 * 1024 * 1024; // cap forwarded request size
 
@@ -52,32 +46,13 @@ function sendJson(res, status, obj) {
   res.end(JSON.stringify(obj));
 }
 
-// GET /api/llm/health -> where will the read run? Prefer a local model (private,
-// on-machine); otherwise report the hosted reader so the app stays always-on.
-// `provider` lets the frontend phrase the privacy line honestly (local vs server).
+// GET /api/llm/health -> is the hosted Cloudflare reader answering right now?
+// Cloud-only: the read always runs on the hosted reader, so this simply reports
+// whether that reader is reachable. `provider` lets the frontend show status.
 async function llmHealth(res) {
-  const ac = new AbortController();
-  const t = setTimeout(() => ac.abort(), 4000);
-  try {
-    const r = await fetch(`${OLLAMA}/api/tags`, { signal: ac.signal });
-    const data = await r.json();
-    const models = (data.models || []).map((m) => m.name);
-    const available = {};
-    for (const m of ALLOWED_MODELS) available[m] = models.some((n) => n === m || n === m + ':latest');
-    if (Object.values(available).some(Boolean)) {
-      sendJson(res, 200, { ok: true, ollama: true, provider: 'local', models, available });
-      return;
-    }
-    // Ollama is up but the model isn't pulled — treat like "no local model".
-    throw new Error('no local model');
-  } catch {
-    // No local model. Best-effort: report the hosted reader so the read still runs.
-    const h = FALLBACK_ENABLED ? await fallbackHealth() : null;
-    if (h && h.available) sendJson(res, 200, { ok: true, ollama: true, provider: 'cloud', model: h.model, models: [DEFAULT_MODEL_KEY], available: { [DEFAULT_MODEL_KEY]: true } });
-    else sendJson(res, 200, { ok: true, ollama: false, provider: null, models: [], available: {} });
-  } finally {
-    clearTimeout(t);
-  }
+  const h = FALLBACK_ENABLED ? await fallbackHealth() : null;
+  if (h && h.available) sendJson(res, 200, { ok: true, ollama: true, provider: 'cloud', model: h.model, models: [DEFAULT_MODEL_KEY], available: { [DEFAULT_MODEL_KEY]: true } });
+  else sendJson(res, 200, { ok: true, ollama: false, provider: null, models: [], available: {} });
 }
 
 // The frontend's model key — what `available` is keyed by in both modes.
@@ -98,9 +73,8 @@ async function fallbackHealth() {
   }
 }
 
-// POST /api/llm -> forward to Ollama. Body: the Ollama request, plus an optional
-// `endpoint` ('generate' | 'chat', default 'generate'). We enforce the model
-// allowlist and stream:false, and never proxy anywhere but the local daemon.
+// POST /api/llm -> forward the read to the hosted Cloudflare reader. Enforces the
+// model allowlist and stream:false. Cloud-only: there is no local daemon path.
 async function llmProxy(req, res) {
   let body;
   try {
@@ -113,35 +87,14 @@ async function llmProxy(req, res) {
     sendJson(res, 400, { ok: false, error: `model not allowed: ${body.model}` });
     return;
   }
-  const endpoint = body.endpoint === 'chat' ? 'chat' : 'generate';
-  const { endpoint: _drop, ...rest } = body;
+  const { endpoint: _drop, ...rest } = body;   // `endpoint` was Ollama-only; drop it
   const payload = { ...rest, stream: false };
-  const ac = new AbortController();
-  const t = setTimeout(() => ac.abort(), LLM_TIMEOUT_MS);
-  try {
-    const r = await fetch(`${OLLAMA}/api/${endpoint}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-      redirect: 'error',
-      signal: ac.signal,
-    });
-    const text = await r.text();
-    if (!r.ok) throw new Error(`ollama ${r.status}`);   // fall through to the hosted reader
-    res.writeHead(r.status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
-    res.end(text);
-  } catch (e) {
-    // No local model answered — silently forward to the hosted reader so the read
-    // still completes. Only if THAT also fails do we tell the client to degrade.
-    if (FALLBACK_ENABLED && await proxyToFallback(payload, res)) return;
-    sendJson(res, 503, { ok: false, error: 'reader unavailable', detail: String(e.name === 'AbortError' ? 'timeout' : (e.message || e)) });
-  } finally {
-    clearTimeout(t);
-  }
+  if (FALLBACK_ENABLED && await proxyToFallback(payload, res)) return;
+  sendJson(res, 503, { ok: false, error: 'reader unavailable' });
 }
 
-// Forward a failed local read to the hosted reader. Returns true once it has
-// written a response, false if the hosted reader was also unreachable.
+// Forward the read to the hosted reader. Returns true once it has written a
+// response, false if the hosted reader was unreachable.
 async function proxyToFallback(payload, res) {
   const ac = new AbortController();
   const t = setTimeout(() => ac.abort(), FALLBACK_TIMEOUT_MS);
@@ -180,7 +133,7 @@ const server = createServer(async (req, res) => {
   try {
     let urlPath = decodeURIComponent((req.url || '/').split('?')[0]);
 
-    // Local-AI proxy routes (handled before static files).
+    // Reader proxy routes (handled before static files).
     if (urlPath === '/api/llm/health' && req.method === 'GET') { await llmHealth(res); return; }
     if (urlPath === '/api/llm' && req.method === 'POST') { await llmProxy(req, res); return; }
 

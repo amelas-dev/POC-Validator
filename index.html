@@ -33,9 +33,10 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 13.5a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0-1.2-2.9H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.2-2.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3 1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
           <span class="tip">Settings</span>
         </button>
-        <span class="avatar" title="Account" aria-hidden="true">
+        <button class="avatar" id="account-btn" type="button" aria-label="Account">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><circle cx="12" cy="8.4" r="3.5"/><path d="M5.6 20a6.4 6.4 0 0 1 12.8 0"/></svg>
-        </span>
+          <span class="tip">Account</span>
+        </button>
       </div>
     </nav>
 
@@ -99,6 +100,8 @@
               <button class="go" id="analyze" type="button" disabled>Check it</button>
             </div>
 
+            <ul class="attachments" id="attachments" aria-label="Attached snippets" hidden></ul>
+
             <div class="aux">
               <button class="linkish" id="try-example" type="button">try an example</button>
             </div>
@@ -128,6 +131,27 @@
           <input type="file" id="zip-input" accept=".zip" hidden />
         </div>
       </div>
+
+      <!-- ============ Region C · Library (alternate tool view) ============ -->
+      <section class="library" id="library" aria-label="Library">
+        <div class="lib-wrap">
+          <header class="lib-head">
+            <div class="lib-head-tx">
+              <h1 class="lib-title">Library</h1>
+              <p class="lib-sub">Every file you’ve checked, kept on this device — re-check, download, or remove it.</p>
+            </div>
+            <div class="lib-tools">
+              <label class="lib-search">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M16 16l4.5 4.5"/></svg>
+                <input type="search" id="lib-search" placeholder="Search" aria-label="Search the library" autocomplete="off" />
+              </label>
+              <button class="lib-clear" id="lib-clear" type="button">Clear all</button>
+            </div>
+          </header>
+          <div class="lib-grid" id="lib-grid"><!-- asset cards rendered from IndexedDB --></div>
+        </div>
+      </section>
+
       <div class="drop-hint" aria-hidden="true">Drop it — I’ve got it.</div>
     </main>
 
