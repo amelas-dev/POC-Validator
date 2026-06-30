@@ -150,14 +150,19 @@ const server = createServer(async (req, res) => {
     // Reject any dotfile/dotdir segment, sensitive basenames, or top-level dirs.
     const rel = filePath.slice(ROOT.length).replace(/^[\\/]+/, '');
     const segments = rel.split(/[\\/]+/).filter(Boolean);
-    const base = segments[segments.length - 1] || '';
+    // Compare case-INSENSITIVELY: macOS/Windows filesystems are case-insensitive, so
+    // `/Server.js` or `/FUNCTIONS/api/llm.js` would otherwise slip a lowercase denylist
+    // yet still be served by the OS. Lower-case both sides.
+    const base = (segments[segments.length - 1] || '').toLowerCase();
+    const top = (segments[0] || '').toLowerCase();
     const DENY_BASENAMES = new Set([
       'server.js', 'package.json', 'package-lock.json',
       'wrangler.toml', 'worker.js', '.assetsignore',
     ]);
-    const DENY_TOP_DIRS = new Set(['functions', 'test', 'node_modules']);
+    const DENY_TOP_DIRS = new Set(['functions', 'test', 'node_modules', 'supabase']);
     const hasDotSegment = segments.some((s) => s.startsWith('.'));
-    if (hasDotSegment || DENY_BASENAMES.has(base) || DENY_TOP_DIRS.has(segments[0])) {
+    const denyByExt = /\.(md|log)$/.test(base);   // docs/logs aren't front-end (mirrors .assetsignore)
+    if (hasDotSegment || denyByExt || DENY_BASENAMES.has(base) || DENY_TOP_DIRS.has(top)) {
       res.writeHead(404, { 'Content-Type': 'text/plain' }).end('Not found');
       return;
     }

@@ -9,7 +9,7 @@ import {
 } from './engine/sources.js';
 import { loadFromSpreadsheet, isSpreadsheet } from './engine/spreadsheet.js';
 import { runAdvisor, checkAvailable, DEFAULT_MODEL } from './llm/advisor.js';
-import { wouldDeEscalate } from './llm/clamp.js';
+import { wouldRelax } from './llm/clamp.js';
 import {
   cloudConfigured, initAuth, currentUser, isSignedIn, onAuth,
   signIn, signUp, signOut, listChecks, insertCheck, clearChecks,
@@ -71,7 +71,10 @@ function computeView() {
     return { r: baseline, baseline, aiApplied: false, aiHeld: false };
   }
   const withAI = resolve(cachedFacts, { ...aiOverrides, ...overrides });
-  if (wouldDeEscalate(baseline.verdict.key, withAI.verdict.key)) {
+  // Clamp on the FULL state (lane + tier + every §5 condition), not just the lane key:
+  // an injectable model could otherwise relax the tier or flip a condition to pass while
+  // the lane key stays pinned by a code-certain fact. Any net relaxation is held.
+  if (wouldRelax(baseline, withAI)) {
     return { r: baseline, baseline, aiApplied: false, aiHeld: true };   // refuse silent downgrade
   }
   return { r: withAI, baseline, aiApplied: true, aiHeld: false };
@@ -401,7 +404,10 @@ async function analyzeFacts(corpus) {
   }
 }
 
+let busyRun = false;   // guard: ignore a second check while one is already in flight
 async function run(loader) {
+  if (busyRun) return;   // a double Enter / click / paste must not start a second analysis
+  busyRun = true;
   clearError();
   overrides = {};
   setState('analyzing');
@@ -445,6 +451,8 @@ async function run(loader) {
     const m = String((err && err.message) || err);
     if (NEEDS_TOKEN.test(m)) $('#token-row').classList.add('open'); // reveal exactly when needed
     showError(friendly(m));
+  } finally {
+    busyRun = false;   // ready for the next check once this one has revealed (or errored)
   }
 }
 // One source of truth for "this error means the user needs a GitHub token" (rate-limit /

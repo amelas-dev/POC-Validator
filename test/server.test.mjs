@@ -47,6 +47,13 @@ try {
   ok('GET /wrangler.toml -> 404', await status('/wrangler.toml') === 404);
   ok('GET /functions/api/llm.js -> 404', await status('/functions/api/llm.js') === 404);
   ok('GET /test/server.test.mjs -> 404', await status('/test/server.test.mjs') === 404);
+  // case-insensitive bypass must NOT slip the denylist (macOS/Windows FS are case-insensitive)
+  ok('GET /SERVER.JS -> 404 (case bypass)', await status('/SERVER.JS') === 404);
+  ok('GET /Server.js -> 404 (case bypass)', await status('/Server.js') === 404);
+  ok('GET /FUNCTIONS/api/llm.js -> 404 (case bypass)', await status('/FUNCTIONS/api/llm.js') === 404);
+  // supabase schema (RLS/storage policies) and docs are not front-end assets
+  ok('GET /supabase/schema.sql -> 404', await status('/supabase/schema.sql') === 404);
+  ok('GET /README.md -> 404', await status('/README.md') === 404);
 
   console.log(`${B}static handler — still serves the app${X}`);
   ok('GET / -> 200', await status('/') === 200);

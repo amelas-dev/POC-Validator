@@ -253,7 +253,7 @@ export const SIGNALS = [
     label: "Power Query pulls from a live external source",
     why: "Section 6: a Power Query (M) source such as Sql.Database / Odbc.DataSource / OleDb.DataSource / Oracle.Database is a live data connection → Lane 2.",
     mapsTo: "backend-needed", effect: "fails-lane1-condition", confidence: "strong",
-    patterns: ["\\b[A-Za-z][\\w.]*\\.Databases?\\s*\\(", "Odbc\\.(DataSource|Query)\\s*\\(", "OleDb\\.DataSource\\s*\\(", "Snowflake\\.\\w+\\s*\\(", "(Web\\.Contents|OData\\.Feed|SharePoint\\.(Files|Contents|Tables))\\s*\\("],
+    patterns: ["\\b[A-Za-z][\\w.]{0,64}\\.Databases?\\s{0,6}\\(", "Odbc\\.(DataSource|Query)\\s{0,6}\\(", "OleDb\\.DataSource\\s{0,6}\\(", "Snowflake\\.\\w{1,40}\\s{0,6}\\(", "(Web\\.Contents|OData\\.Feed|SharePoint\\.(Files|Contents|Tables))\\s{0,6}\\("],
   },
   {
     id: "connections-external-data",
@@ -288,14 +288,14 @@ export const SIGNALS = [
     label: "Formula calls an outside service / external workbook",
     why: "Section 5.6: =WEBSERVICE/=FILTERXML and RTD() reach an external service, and links into another workbook or a \\\\share are external data dependencies → Lane 2.",
     mapsTo: "5.6", effect: "fails-lane1-condition", confidence: "moderate",
-    patterns: ["=?\\s*WEBSERVICE\\s*\\(", "=?\\s*FILTERXML\\s*\\(", "\\bRTD\\s*\\(", "=cmd\\s*\\|", "\\\\\\\\[\\w.$-]+\\\\[^'\"\\n]+\\.(xls[xmb]?)"],
+    patterns: ["=?\\s{0,6}WEBSERVICE\\s{0,6}\\(", "=?\\s{0,6}FILTERXML\\s{0,6}\\(", "\\bRTD\\s{0,6}\\(", "=cmd\\s{0,6}\\|", "\\\\\\\\[\\w.$-]{1,200}\\\\[^'\"\\n]{1,400}\\.(xls[xmb]?)"],
   },
   {
     id: "excel4-macro-exec",
     label: "Excel-4.0 (XLM) macro runs commands / DLL calls",
     why: "Section 6 / 5.5: legacy Excel-4 macro sheets using EXEC/CALL/REGISTER/FOPEN execute OS commands or call DLLs — a classic abuse vector, never a static-host-safe utility → Lane 2.",
     mapsTo: "backend-needed", effect: "fails-lane1-condition", confidence: "strong",
-    patterns: ["=?\\s*EXEC\\s*\\(", "=?\\s*REGISTER\\s*\\(", "=?\\s*FOPEN\\s*\\(", "=?\\s*FWRITE(LN)?\\s*\\("],
+    patterns: ["=?\\s{0,6}EXEC\\s{0,6}\\(", "=?\\s{0,6}REGISTER\\s{0,6}\\(", "=?\\s{0,6}FOPEN\\s{0,6}\\(", "=?\\s{0,6}FWRITE(LN)?\\s{0,6}\\("],
   },
   {
     id: "vba-present-unreadable",

@@ -65,10 +65,12 @@ const GO_WRITE = /\b(db|tx)\.(Create|Save|Updates?|Delete|FirstOrCreate)\s*\(|\b
 // Restricted-data detection: a strong entity anywhere, or "restricted"/
 // "confidential" in a non-CSS / non-markup line. Operates on comment-stripped text.
 function detectRestricted(cleanFiles) {
-  // Normalize identifier separators so snake_case / kebab-case entities (investor_capital_account,
-  // fund-nav) read the same as their spaced forms. STRONG_ACRONYM stays case-sensitive on the
-  // raw text (real NAV/AUM are uppercase; fund_nav is lowercase and matched via STRONG_ENTITY).
-  const norm = (s) => s.replace(/[_-]+/g, ' ');
+  // Normalize identifier separators so snake_case / kebab-case AND camelCase entities
+  // (investor_capital_account, fund-nav, investorCapitalAccount) read the same as their
+  // spaced forms — camelCase is the dominant JS convention, so an entity buried mid-hump
+  // (investorCapitalAccount) must not slip the \b-anchored STRONG_ENTITY. STRONG_ACRONYM
+  // stays case-sensitive on the raw text (real NAV/AUM are uppercase).
+  const norm = (s) => s.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ');
   if (cleanFiles.some((f) => STRONG_ENTITY.test(norm(f.clean)) || STRONG_ACRONYM.test(f.clean))) return true;
   for (const f of cleanFiles) {
     const e = (f.path.split('.').pop() || '').toLowerCase();
@@ -125,11 +127,18 @@ function hasObfuscatedVendorHost(clean) {
 // is un-inferable; a name must not auto-escalate to Approve).
 // Note `(?<!\.)\bdocx\b` matches the `docx` LIBRARY but not a bare `report.docx` filename
 // (which a VBA macro routinely writes without it being a relied-on client deliverable).
-const STRONG_RELIANCE_EXPORT = /(jspdf|pdfkit|exceljs|xlsx\.(write|writeFile)|pptxgenjs|(?<!\.)\bdocx\b|html2pdf|html2canvas|puppeteer|officegen|carbone)/i;
+// NOTE: html2canvas is deliberately NOT here — screenshotting the DOM to a <canvas> is
+// not authoritative document generation, and flagging a screenshot helper as a relied-on
+// client deliverable (-> Approve) is a false positive. The libraries kept here actually
+// emit a document artifact (PDF/XLSX/PPTX/DOCX).
+const STRONG_RELIANCE_EXPORT = /(jspdf|pdfkit|exceljs|xlsx\.(write|writeFile)|pptxgenjs|(?<!\.)\bdocx\b|html2pdf|puppeteer|officegen|carbone)/i;
 // Sharing/reliance is mostly un-inferable from code; only fire on unambiguous
 // markers. (Deliberately NOT `role:` — that collides with chat message roles.)
 const STRONG_RELIANCE_SHARE = /(node-cron|cron\.schedule|@nestjs\/schedule|crontab|"bin"\s*:|#!\/usr\/bin\/env\s+node|\bargparse\b|click\.command|\bisAdmin\b|hasRole\s*\(|\b(colleagues|team\s*drive|other\s+users|multi[-\s]user|shared\s+with|for\s+the\s+team|the\s+(ap|ops|finance|accounting|sales)\s+team|everyone\s+(uses|on))\b)/i;
-const PUBLIC_AUTH = /(allowanonymous\s*:\s*true|requireauth\s*:\s*false|auth\s*:\s*['"]none['"]|\bauth0\b|@clerk|firebase\/auth|supabase\.auth\.signup|createuserwithemailandpassword)/i;
+// Only EXPLICIT public/anonymous-auth configuration counts as an SSO bypass. Merely
+// importing an auth provider (auth0 / @clerk / firebase/auth) says nothing about whether
+// SSO is bypassed — those are dropped to avoid flagging every authenticated app as §5.6.
+const PUBLIC_AUTH = /(allowanonymous\s*:\s*true|requireauth\s*:\s*false|auth\s*:\s*['"]none['"]|supabase\.auth\.signup|createuserwithemailandpassword)/i;
 
 function anyEvidenceMatches(entry, re) {
   return !!entry && entry.evidence.some((e) => re.test(e.text));
@@ -181,14 +190,21 @@ const DB_ORM_WRITE = /(insert\s+into|update\s+\w+\s+set|delete\s+from|upsert|mer
 // A database driver/ORM that is merely IMPORTED/connected (no mutation) is a live external
 // data connection per §6 -> Lane 2, NOT an authoritative write (-> Approve). The `(?!:)`
 // keeps a `scheme:` DSN position (PDO's "mysql:host=…") from reading as an import.
-const DB_DRIVER_IMPORT = /\b(pg|mysql2?|sqlite3|better-sqlite3|mongodb|mongoose|psycopg2?|sqlalchemy|knex|sequelize|typeorm|cx_oracle|@prisma\/client)\b(?!:)(?!\.Databases?\s*\()/i;
+// Must appear in a real import/require — NOT as a bare identifier. `pg` (page), `m`, and
+// `mysql` (a plain string value) are common tokens; matching them anywhere wrongly pushed
+// any utility that named a variable `pg` to Lane 2. Anchoring to import context fixes it
+// while still catching `require('pg')`, `import x from 'mysql2'`, `import psycopg2`,
+// `from sqlalchemy import …`.
+const DB_DRIVER_IMPORT = /(?:require\(\s*|from\s+|import\s+)['"]?(pg|mysql2?|sqlite3|better-sqlite3|mongodb|mongoose|psycopg2?|sqlalchemy|knex|sequelize|typeorm|cx_oracle|@prisma\/client)\b/i;
 // A genuine backend runtime — framework, listener, serverless dir, or container —
 // not merely a client file that happens to be named app.js / main.js / server.js.
 const BACKEND_STRONG = /(import\s+express|require\(['"]express['"]\)|"express"\s*:|\bfastify\b|@nestjs\/|\bkoa\b|from\s+flask\s+import|flask\(__name__\)|from\s+fastapi\s+import|fastapi\s*\(|app\.listen\s*\(|http\.createserver|createserver\s*\(|app\.(get|post|put|delete)\s*\()/i;
 // Server runtimes the JS/Python-tuned list above misses, so a benign-but-standalone
 // server (Go/C#/Java/PHP/other-Python) is still §6 Lane 2 even with deterministic
 // logic. A live server process can't run on the static shared host.
-const BACKEND_OTHER = /(http\.ListenAndServe|http\.NewServeMux|gin\.(Default|New)\s*\(|echo\.New\s*\(|fiber\.New\s*\(|chi\.NewRouter\s*\(|mux\.NewRouter\s*\(|\.Run\s*\(\s*['"`]:\d|WebApplication\.CreateBuilder|app\.Map(Get|Post|Put|Delete|Patch|Group|Methods|Controllers)|\bapp\.Run\s*\(|:\s*ControllerBase\b|\[ApiController\]|@RestController|@SpringBootApplication|@(Get|Post|Put|Delete|Patch|Request)Mapping|SpringApplication\.run|uvicorn\.run|\bgunicorn\b|from\s+django\b|\baiohttp\b|\btornado\b|\bsanic\b|\bstarlette\b|<\?php)/i;
+const BACKEND_OTHER = /(http\.ListenAndServe|http\.NewServeMux|gin\.(Default|New)\s*\(|echo\.New\s*\(|fiber\.New\s*\(|chi\.NewRouter\s*\(|mux\.NewRouter\s*\(|\.Run\s*\(\s*['"`]:\d|WebApplication\.CreateBuilder|app\.Map(Get|Post|Put|Delete|Patch|Group|Methods|Controllers)|\bapp\.Run\s*\(|:\s*ControllerBase\b|\[ApiController\]|@RestController|@SpringBootApplication|@(Get|Post|Put|Delete|Patch|Request)Mapping|SpringApplication\.run|uvicorn\.run|\bgunicorn\b|from\s+django\b|\baiohttp\b|\btornado\b|\bsanic\b|\bstarlette\b)/i;
+// `<?php` as a free-floating token (e.g. a PHP snippet inside a JS string / a docs page)
+// is NOT a backend; a real PHP file is already caught by its `.php` extension below.
 const BACKEND_PATH = /(pages\/api\/|app\/api\/.*\/route\.(js|ts)|netlify\/functions\/|(^|\/)functions\/.*\.(js|ts)$|(^|\/)dockerfile$|docker-compose|(^|\/)procfile$|\.php$)/i;
 // ORM / driver writes the SQL-and-JS-ORM-tuned DB_ORM_WRITE misses: EF Core
 // (.SaveChanges), R DBI (dbWriteTable/dbExecute), pandas (.to_sql), JPA/JDBC.
@@ -213,7 +229,7 @@ const VBA_OS_INTEGRATION = /\bShell\s*\(|(^|:)\s*Shell\s+["']|\bShell\s+["'][^"'
 //   element) and safe to grep over EVERY artifact. `\w+\.Databases?\(` covers every Power
 //   Query DB connector generically (Sql/PostgreSQL/MySQL/Db2/Teradata/SapHana/Oracle/…),
 //   not a closed allowlist.
-const LIVE_DATA_CONN_CODE = /\b[A-Za-z][\w.]*\.Databases?\s*\(|Odbc\.(DataSource|Query)\s*\(|OleDb\.DataSource\s*\(|\bSnowflake\.\w+\s*\(|CreateObject\s*\(\s*["']ADODB\.(Connection|Recordset|Command)["']|New\s+ADODB\.(Connection|Recordset|Command)|<(dbPr|olapPr|webPr)\b/i;
+const LIVE_DATA_CONN_CODE = /\b[A-Za-z][\w.]{0,64}\.Databases?\s{0,6}\(|Odbc\.(DataSource|Query)\s{0,6}\(|OleDb\.DataSource\s{0,6}\(|\bSnowflake\.\w{1,40}\s{0,6}\(|CreateObject\s*\(\s*["']ADODB\.(Connection|Recordset|Command)["']|New\s+ADODB\.(Connection|Recordset|Command)|<(dbPr|olapPr|webPr)\b/i;
 //   STRING clauses are loose connection-string fragments that can appear in benign prose
 //   (a defined-name label, a cell formula), so they are grepped ONLY over artifacts that
 //   actually carry connection strings (connections.xml, VBA, Power Query) — never over
@@ -237,10 +253,18 @@ function decide(f, ua = {}) {
   const autoDataScope = f.restrictedStrong ? 'restricted' : 'general';
   const autoReliance = (f.relianceExport || (f.drafting && f.restrictedStrong)) ? 'deliverable' : f.relianceShare ? 'shared' : 'personal';
   const autoWriteAuthority = f.dbWrite ? 'authoritative' : 'none';
-  const dataScope = ua.dataScope || autoDataScope;
-  const reliance = ua.reliance || autoReliance;
-  const writeAuthority = ua.writeAuthority || autoWriteAuthority;
-  const humanReview = ua.humanReview;
+  // Normalize + validate the (possibly AI- or URL-derived) assumptions: trim/lowercase
+  // string enums against an allow-list and coerce humanReview to a strict boolean, so a
+  // stray case/whitespace/type variant can't silently leak through OR drop to the lighter
+  // auto-default. Anything unrecognized falls back to the code-derived auto value.
+  const pick = (v, allowed, auto) => { const s = typeof v === 'string' ? v.trim().toLowerCase() : v; return allowed.includes(s) ? s : auto; };
+  const dataScope = pick(ua.dataScope, ['general', 'restricted'], autoDataScope);
+  const reliance = pick(ua.reliance, ['personal', 'shared', 'deliverable'], autoReliance);
+  const writeAuthority = pick(ua.writeAuthority, ['authoritative', 'scratch', 'none'], autoWriteAuthority);
+  const hr = ua.humanReview;
+  const humanReview = hr === true || hr === false ? hr
+    : typeof hr === 'string' ? (['true', 'yes'].includes(hr.trim().toLowerCase()) ? true : ['false', 'no'].includes(hr.trim().toLowerCase()) ? false : undefined)
+    : undefined;
   const reliedProbabilistic = f.probabilistic && (humanReview === false || (humanReview === undefined && f.silentBatch));
   const authoritativeWrite = f.dbWrite && writeAuthority === 'authoritative';
   const approve = authoritativeWrite || reliance === 'deliverable' || (dataScope === 'restricted' && reliedProbabilistic);

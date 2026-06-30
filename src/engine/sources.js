@@ -90,7 +90,7 @@ export function parseGitHubUrl(input) {
   // Accept: https://github.com/owner/repo[/tree|blob/branch/sub/dir], git@, or owner/repo.
   // The github.com host is anchored so look-alikes (notgithub.com, evil.com/github.com/...)
   // are rejected. Both /tree/<branch> and /blob/<branch> are recognized.
-  let m = url.match(/^(?:https?:\/\/)?(?:www\.)?github\.com\/([^/\s]+)\/([^/\s#?]+?)(?:\.git)?(?:\/(?:tree|blob)\/([^/\s]+)(?:\/(.+?))?)?(?:[#?].*)?$/i);
+  let m = url.match(/^(?:https?:\/\/)?(?:www\.)?github\.com\/([^/\s]+)\/([^/\s#?]+?)(?:\.git)?(?:\/(?:tree|blob)\/([^/\s]+)(?:\/(.+?))?)?\/?(?:[#?].*)?$/i);
   if (!m) m = url.match(/^git@github\.com:([^/\s]+)\/([^/\s#?]+?)(?:\.git)?$/i);
   if (!m) {
     const b = url.match(/^([\w.-]+)\/([\w.-]+)$/); // bare owner/repo

@@ -290,24 +290,36 @@ function attr(tag, name) {
 // shared/array formulas; shared followers are skipped (they reference the master).
 export function extractFormulas(sheetXml) {
   const out = [];
-  if (!sheetXml || sheetXml.indexOf('<f') < 0) return out;
-  const re = /<c\b[^>]*\br="([A-Za-z]+[0-9]+)"[^>]*>([\s\S]*?)<\/c>/g;
+  // Cap the input and BOUND every attribute run ([^>]{0,N} not [^>]*): a worksheet part with
+  // many unterminated `<c` openers (no closing `>`) made the twin unbounded [^>]* runs backtrack
+  // quadratically. Real cell tags are short, so the bound is harmless. (ReDoS hardening.)
+  const xml = String(sheetXml || '').slice(0, MAX_TEXT_BYTES);
+  if (xml.indexOf('<f') < 0) return out;
+  // Match a COMPLETE <c …>…</c> with single bounded classes — one class up to the closing
+  // `>`, then pull `r=` and `<f>` from the captured pieces separately. Two nested [^>] runs
+  // around a required attr backtrack quadratically on unterminated openers; one class doesn't.
+  const re = /<c\b([^>]{0,400})>([\s\S]{0,8192}?)<\/c>/g;
   let m; let n = 0;
-  while ((m = re.exec(sheetXml)) && n < MAX_FORMULAS_PER_SHEET) {
-    const fm = /<f\b[^>]*>([\s\S]*?)<\/f>/.exec(m[2]);
-    if (fm && fm[1].trim()) { out.push({ ref: m[1], formula: unescapeXml(fm[1]) }); n++; }
+  while ((m = re.exec(xml)) && n < MAX_FORMULAS_PER_SHEET) {
+    const rm = /\br="([A-Za-z]+[0-9]+)"/.exec(m[1]);
+    if (!rm) continue;
+    const fm = /<f\b[^>]{0,400}>([\s\S]{0,8192}?)<\/f>/.exec(m[2]);
+    if (fm && fm[1].trim()) { out.push({ ref: rm[1], formula: unescapeXml(fm[1]) }); n++; }
   }
   return out;
 }
 
 // Sheet display names + defined names + workbook-level external markers, as scannable text.
 export function parseWorkbookStructure(workbookXml) {
+  const xml = String(workbookXml || '').slice(0, MAX_TEXT_BYTES);   // cap input (ReDoS hardening)
   const sheets = [];
-  const sre = /<sheet\b[^>]*>/g; let m;
-  while ((m = sre.exec(workbookXml))) { const nm = attr(m[0], 'name'); if (nm) sheets.push(nm); }
+  const sre = /<sheet\b[^>]{0,2048}>/g; let m; let guard = 0;
+  while ((m = sre.exec(xml)) && guard++ < 10000) { const nm = attr(m[0], 'name'); if (nm) sheets.push(nm); }
   const names = [];
-  const dre = /<definedName\b([^>]*)>([\s\S]*?)<\/definedName>/g;
-  while ((m = dre.exec(workbookXml))) names.push({ name: attr('<x ' + m[1] + '>', 'name'), value: unescapeXml(m[2]) });
+  // Bound the attribute run AND the body, and cap iterations: many unterminated <definedName>
+  // openers otherwise rescanned to EOF each time (quadratic).
+  const dre = /<definedName\b([^>]{0,2048})>([\s\S]{0,8192}?)<\/definedName>/g; guard = 0;
+  while ((m = dre.exec(xml)) && guard++ < 10000) names.push({ name: attr('<x ' + m[1] + '>', 'name'), value: unescapeXml(m[2]) });
   return { sheets, names };
 }
 

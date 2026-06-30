@@ -6,7 +6,8 @@
   "description": "Lane — POC Validator. Drop in a GitHub URL, code files, or a spreadsheet (xlsm/xlsx/csv) and instantly see which governance Lane a POC is, and why.",
   "scripts": {
     "start": "node server.js",
-    "test": "node test/run.mjs && node test/spreadsheet.mjs && node test/advisor.test.mjs && node test/sources.test.mjs && node test/server.test.mjs && node test/pressure.mjs test/pressure-cases.json"
+    "test": "node test/run.mjs && node test/spreadsheet.mjs && node test/advisor.test.mjs && node test/sources.test.mjs && node test/server.test.mjs && node test/pressure.mjs test/pressure-cases.json && node test/qa/run-all.mjs",
+    "test:qa": "node test/qa/run-all.mjs"
   },
   "author": "Lane — POC Validator",
   "license": "UNLICENSED"

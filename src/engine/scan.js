@@ -131,13 +131,19 @@ function stripTagSpans(text, openRe, closeTag, line, block) {
   openRe.lastIndex = 0;
   let m;
   while ((m = openRe.exec(text)) !== null) {
-    const innerStart = m.index + m[0].length;
     if (m[0].length === 0) { openRe.lastIndex++; continue; }
+    const innerStart = m.index + m[0].length;
     const closeIdx = lower.indexOf(closeTag, innerStart);
     const innerEnd = closeIdx < 0 ? text.length : closeIdx;
-    if (innerEnd <= innerStart) continue;
-    const stripped = stripWithStyle(text.slice(innerStart, innerEnd), line, block, false, false);
-    for (let k = 0; k < stripped.length; k++) chars[innerStart + k] = stripped[k];
+    if (innerEnd > innerStart) {
+      const stripped = stripWithStyle(text.slice(innerStart, innerEnd), line, block, false, false);
+      for (let k = 0; k < stripped.length; k++) chars[innerStart + k] = stripped[k];
+    }
+    // Unclosed tag: everything after is its content — strip once and STOP. Re-scanning
+    // for more openers inside the unterminated span re-stripped the whole tail per opener
+    // (O(n^2): ~40s on 20k bare `<script>`). Otherwise resume AFTER this tag's close.
+    if (closeIdx < 0) break;
+    openRe.lastIndex = closeIdx + closeTag.length;
   }
   return chars.join('');
 }
