@@ -25,7 +25,7 @@
   /* ---- ink — warm browns ---- */
   --ink:     #28231C;         /* body / headlines */
   --muted:   #6E655A;         /* meta / captions */
-  --soft:    #9A8E7E;         /* faintest text */
+  --soft:    #80735F;         /* faintest text — kept dark enough for WCAG AA (~4.7:1 on paper) */
   --hairline: rgba(110, 69, 39, 0.13);
   --hover:   #EFE9DE;
   --press:   #E7DFD2;
@@ -153,7 +153,7 @@ body { overflow: hidden; }   /* the shell owns the viewport; only .main scrolls 
 .side-owner { flex: none; padding: 16px; border-top: 1px solid var(--chrome-line); }
 .so-eyebrow { font-family: var(--font-display); font-size: 11px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; color: var(--soft); margin-bottom: 10px; }
 .so-row { display: flex; align-items: center; gap: 10px; }
-.so-avatar { width: 30px; height: 30px; flex: none; border-radius: 50%; background: var(--zircon); color: #6E4527; display: grid; place-items: center; font-family: var(--font-display); font-size: 12px; font-weight: 700; }
+.so-avatar { width: 30px; height: 30px; flex: none; border-radius: 50%; background: var(--zircon); color: var(--signoff); display: grid; place-items: center; font-family: var(--font-display); font-size: 12px; font-weight: 700; }
 .so-tx { display: flex; flex-direction: column; line-height: 1.25; min-width: 0; }
 .so-name { font-size: 12.5px; font-weight: 600; color: var(--ink); }
 .so-role { font-size: 11px; color: var(--soft); }
@@ -506,7 +506,7 @@ body { overflow: hidden; }   /* the shell owns the viewport; only .main scrolls 
    warm palette so every inherited component warms automatically. */
 .view-result {
   --c-ink: color-mix(in srgb, var(--c) 60%, #000);
-  width: 100%; max-width: 1180px; margin: 0 auto;
+  width: 100%;   /* the result column width is capped once, on .measure (1140px) */
   flex-direction: column; gap: clamp(28px, 3.4vw, 44px);
 }
 .canvas[data-state="result"] .view-result { display: flex; }
@@ -780,7 +780,7 @@ body { overflow: hidden; }   /* the shell owns the viewport; only .main scrolls 
 .lighter-coin svg { width: 12px; height: 12px; }
 .lighter-items { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 11px; }
 .lighter-items li { display: flex; gap: 11px; align-items: flex-start; }
-.lighter-items .ln { flex: none; width: 14px; text-align: right; font-size: 11px; font-weight: 700; color: #C9A06A; line-height: 1.5; font-variant-numeric: tabular-nums; }
+.lighter-items .ln { flex: none; width: 14px; text-align: right; font-size: 11px; font-weight: 700; color: #9A6A2A; line-height: 1.5; font-variant-numeric: tabular-nums; }
 .lighter-items li > span:last-child { font-size: 12.5px; line-height: 1.5; color: var(--muted); }
 
 .dock-div { height: 1px; background: var(--chrome-line); margin: 22px 0; }
@@ -800,7 +800,7 @@ body { overflow: hidden; }   /* the shell owns the viewport; only .main scrolls 
 .assume { margin: 2px 0 0; display: flex; flex-direction: column; gap: 8px; }
 .assume .q { font-size: 10.5px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--soft); }
 .seg { display: flex; gap: 4px; padding: 4px; background: var(--gray); border: 1px solid var(--chrome-line); border-radius: 10px; }
-.seg button { flex: 1; min-width: 0; text-align: center; font: inherit; font-family: var(--font-ui); font-size: 12px; font-weight: 500; color: var(--muted); background: none; border: none; border-radius: 7px; padding: 8px 6px; cursor: pointer; line-height: 1.25; transition: background 0.14s, color 0.14s; }
+.seg button { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: center; text-align: center; font: inherit; font-family: var(--font-ui); font-size: 12px; font-weight: 500; color: var(--muted); background: none; border: none; border-radius: 7px; padding: 8px 6px; cursor: pointer; line-height: 1.25; transition: background 0.14s, color 0.14s; }
 .seg button:hover { color: var(--ink); }
 .seg button.on { color: var(--ink); font-weight: 600; background: var(--white); box-shadow: 0 1px 2px rgba(40,35,28,0.10); }
 
@@ -953,15 +953,21 @@ body { overflow: hidden; }   /* the shell owns the viewport; only .main scrolls 
   --paper: #17120C; --paper-ink: #F4EADD; --paper-muted: #B6A491; --paper-soft: #8C7E6F; --paper-line: rgba(255,226,188,0.12);
   --shadow: 0 1px 2px rgba(0,0,0,0.5), 0 22px 56px -30px rgba(0,0,0,0.85);
 }
-/* On dark, the state-pill glow backgrounds are translucent over the dark dock
-   surface; lighten the pill text so it still clears WCAG AA (4.5:1) there. */
-:root[data-theme="dark"] .chk .state.ok { color: #4FD498; }
-:root[data-theme="dark"] .chk .state.work { color: #9CB8F0; }
-:root[data-theme="dark"] .chk .state.rev { color: #F0A57E; }
+/* On dark, the dock badge / lighter-number / triage-initial foregrounds sit on
+   translucent or dark warm surfaces; lighten them so they clear WCAG AA. (.chk-badge.work
+   sits on a fixed light-tan chip, so it keeps its dark text in both modes.) */
+:root[data-theme="dark"] .chk-badge.ok { color: #7FD49B; }
+:root[data-theme="dark"] .chk-badge.rev { color: #E6A87C; }
+:root[data-theme="dark"] .so-avatar { color: #E6B488; }
+:root[data-theme="dark"] .lighter-items .ln { color: #D2A862; }
+:root[data-theme="dark"] .diff-table .state.ok { color: #4FD498; }
+:root[data-theme="dark"] .diff-table .state.work { color: #9CB8F0; }
+:root[data-theme="dark"] .diff-table .state.rev { color: #F0A57E; }
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .chk .state.ok { color: #4FD498; }
-  :root:not([data-theme="light"]) .chk .state.work { color: #9CB8F0; }
-  :root:not([data-theme="light"]) .chk .state.rev { color: #F0A57E; }
+  :root:not([data-theme="light"]) .chk-badge.ok { color: #7FD49B; }
+  :root:not([data-theme="light"]) .chk-badge.rev { color: #E6A87C; }
+  :root:not([data-theme="light"]) .so-avatar { color: #E6B488; }
+  :root:not([data-theme="light"]) .lighter-items .ln { color: #D2A862; }
   :root:not([data-theme="light"]) .diff-table .state.ok { color: #4FD498; }
   :root:not([data-theme="light"]) .diff-table .state.work { color: #9CB8F0; }
   :root:not([data-theme="light"]) .diff-table .state.rev { color: #F0A57E; }
