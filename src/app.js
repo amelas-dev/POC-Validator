@@ -528,7 +528,7 @@ function renderResult(fresh = false) {
   const conf = r.confidence || { level: 'high', reasons: [] };
   // Confidence is surfaced once, as the actionable .conf-nudge line on the card (and an
   // ambient "Lower confidence" in the footer) — so the trust line stays just the entry point.
-  const seeFull = `<button class="trust" id="trust-line" aria-label="See the full check"><span class="t-link">see the full check</span></button>`;
+  const seeFull = `<button class="trust" id="trust-line" aria-label="See the full check and adjust what we assumed"><span class="t-link">see the full check &amp; adjust</span></button>`;
 
   // Confidence-aware "firm this up" nudge — when the read isn't high-confidence,
   // promote the most actionable reason to a single calm line on the card (muted
@@ -1229,6 +1229,9 @@ function selectTool(id) {
 // Home — clicking the wordmark/logo (or rail mark) returns to a fresh "add your POC"
 // screen, switching the canvas back to the Validator and clearing the current check.
 function goHome() {
+  // Already on a fresh input — nothing to discard, so don't flash a reset. (A result is
+  // always saved to History first, so going home is recoverable, not destructive.)
+  if (shell.dataset.tool === 'validator' && card.dataset.state === 'input') return;
   shell.dataset.tool = 'validator';
   $('#th-name').textContent = 'Validator';
   renderRail();
@@ -1239,35 +1242,58 @@ function goHome() {
 // (history); typing filters live, click/Enter re-opens, Esc/backdrop closes.
 function openSearch() {
   if (document.querySelector('.search-overlay')) return;
+  const trigger = document.activeElement;   // restore focus here on dismissal
   const ov = document.createElement('div');
   ov.className = 'search-overlay';
   ov.innerHTML = `
     <div class="search-modal" role="dialog" aria-modal="true" aria-label="Search your checks">
       <div class="search-bar">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M16 16l4.5 4.5"/></svg>
-        <input type="search" id="search-input" placeholder="Search your checks…" autocomplete="off" spellcheck="false" aria-label="Search your checks" />
+        <input type="search" id="search-input" placeholder="Search your checks…" autocomplete="off" spellcheck="false" role="combobox" aria-expanded="true" aria-controls="search-results" aria-label="Search your checks" />
         <kbd>esc</kbd>
       </div>
-      <div class="search-results" id="search-results"></div>
+      <div class="search-results" id="search-results" role="listbox" aria-label="Matching checks"></div>
     </div>`;
   document.body.appendChild(ov);
+  // Trap focus by inerting everything behind the dialog (the same pattern the Settings,
+  // walkthrough and dock overlays use); the overlay is a body sibling of #shell.
+  const behind = [shell, document.querySelector('.skip')].filter(Boolean);
+  behind.forEach((el) => el.setAttribute('inert', ''));
   const input = ov.querySelector('#search-input');
   const results = ov.querySelector('#search-results');
   const render = () => {
     const q = input.value.trim().toLowerCase();
     const items = libraryCache.filter((a) => !q || (a.name || '').toLowerCase().includes(q)).slice(0, 12);
     results.innerHTML = items.length
-      ? items.map((a) => `<button class="search-row" type="button" data-id="${esc(a.id)}" data-v="${esc(a.verdict || '')}">
+      ? items.map((a) => `<button class="search-row" type="button" role="option" data-id="${esc(a.id)}" data-v="${esc(a.verdict || '')}">
           <span class="sr-dot" aria-hidden="true"></span>
           <span class="sr-tx"><span class="sr-name">${esc(a.name || 'Check')}</span><span class="sr-meta">${esc(a.verdict ? (RECENT_LABEL[a.verdict] || '') : sourceLabel(a.source))}${a.createdAt ? ` · ${esc(relTime(a.createdAt))}` : ''}</span></span>
         </button>`).join('')
       : `<div class="search-empty">${q ? 'No checks match that.' : 'Run a check and it’ll show up here to search.'}</div>`;
   };
-  const close = () => { ov.remove(); document.removeEventListener('keydown', onKey); };
-  const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); close(); } };
+  const close = (restore = true) => {
+    ov.remove();
+    document.removeEventListener('keydown', onKey);
+    behind.forEach((el) => el.removeAttribute('inert'));
+    if (restore && trigger && document.contains(trigger)) trigger.focus();   // WCAG 2.4.3
+  };
+  const open = (id) => { close(false); reopenAsset(id); };   // reopen moves focus itself
+  const rows = () => Array.from(results.querySelectorAll('.search-row'));
+  const onKey = (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); close(); return; }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      const list = rows(); if (!list.length) return;
+      e.preventDefault();
+      const cur = list.indexOf(document.activeElement);
+      const next = e.key === 'ArrowDown' ? (cur + 1) % list.length : (cur <= 0 ? list.length - 1 : cur - 1);
+      list[next].focus();
+    } else if (e.key === 'Enter' && document.activeElement === input) {
+      const first = rows()[0]; if (first) { e.preventDefault(); open(first.dataset.id); }
+    }
+  };
   document.addEventListener('keydown', onKey);
   ov.addEventListener('mousedown', (e) => { if (e.target === ov) close(); });
-  results.addEventListener('click', (e) => { const row = e.target.closest('.search-row'); if (!row) return; close(); reopenAsset(row.dataset.id); });
+  results.addEventListener('click', (e) => { const row = e.target.closest('.search-row'); if (row) open(row.dataset.id); });
   input.addEventListener('input', render);
   if (!libraryCache.length) loadLibrary().then(render); else render();
   input.focus();
@@ -1783,7 +1809,15 @@ async function saveToLibrary(corpus, result) {
   if (!savingEnabled()) return;   // user turned saving off — nothing is stored
   try {
     const id = (globalThis.crypto && crypto.randomUUID) ? crypto.randomUUID() : `a-${Math.floor(performance.now())}-${libraryCache.length}`;
-    const payload = { source: corpus.source, label: corpus.label, files: corpus.files, meta: corpus.meta, verdict: result.verdict.key, savedAt: Date.now() };
+    // Persist the SETTLED read alongside the corpus so re-opening shows the exact saved
+    // result instantly — no re-running the engine and no second AI call. `ai` holds the
+    // model's un-inferable judgments; `overrides` holds any manual changes at save time.
+    const payload = {
+      source: corpus.source, label: corpus.label, files: corpus.files, meta: corpus.meta,
+      verdict: result.verdict.key, savedAt: Date.now(),
+      ai: { result: aiResult, overrides: aiOverrides, state: aiState },
+      overrides: { ...overrides },
+    };
     const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
     await putAsset({
       id, createdAt: Date.now(), name: corpus.label || slugOf(result) || 'Check',
@@ -1797,15 +1831,28 @@ async function saveToLibrary(corpus, result) {
   } catch { /* storage unavailable (private mode / quota) — degrade quietly */ }
 }
 
-// Re-open a saved check: load its corpus and run the pipeline again (no re-save).
+// Re-open a saved check: DISPLAY the saved read directly — never re-run the engine or
+// the AI. The verdict re-resolves locally from the re-derived (deterministic, instant)
+// facts plus the saved AI judgments + any manual overrides, so it matches what was saved.
 async function reopenAsset(id) {
   let a; try { a = await getAsset(id); } catch { a = null; }
   if (!a || !a.blob) return;
   let p; try { p = JSON.parse(await a.blob.text()); } catch { return; }
   setSidebar(false);
   if (shell.dataset.tool !== 'validator') { shell.dataset.tool = 'validator'; $('#th-name').textContent = 'Validator'; renderRail(); }
-  skipNextSave = true;
-  run(() => Promise.resolve({ source: p.source || 'upload', label: p.label || a.name || 'Check', files: p.files || [], meta: p.meta || {}, notes: [] }));
+  // Cancel anything in flight so a stale run can't paint over the re-opened result.
+  if (aiAbort) aiAbort.abort();
+  aiRunId++; revealRun++; busyRun = false;
+  corpus = { source: p.source || 'upload', label: p.label || a.name || 'Check', files: p.files || [], meta: p.meta || {}, notes: [] };
+  cachedFacts = extractFacts(corpus);   // code-only facts — synchronous, no network/AI
+  // Restore the saved AI read (older saves predate this and just show the engine's read).
+  aiResult = (p.ai && p.ai.result) || null;
+  aiOverrides = (p.ai && p.ai.overrides) || {};
+  aiState = (p.ai && p.ai.state) || (aiResult ? 'done' : 'off');
+  overrides = p.overrides ? { ...p.overrides } : {};
+  nudgedKinds.clear(); caExpand = false;
+  setState('result');
+  renderResult(true);
 }
 
 // Download a saved check: the original file if it was a single file, else a JSON bundle.
