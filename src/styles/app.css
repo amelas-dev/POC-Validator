@@ -1012,11 +1012,40 @@ button.set-row:hover { background: var(--hover); }
   .set-content { padding: 22px 18px; }
 }
 
-/* ---- Library tool — in progress -------------------------------------------
-   The #library markup ships but the tool isn't wired or styled yet, so by default
-   it must NOT render (its unstyled placeholder otherwise balloons into the main
-   canvas — a 976px magnifying-glass icon). Reveal it only when a real `library`
-   tool view is active; until then the Validator canvas owns the main region. */
+/* ---- Library tool — saved checks (History + Library share the asset store) ----
+   Hidden unless the Library tool view is active; then it owns the main region. */
 .library { display: none; }
-.shell[data-tool="library"] .library { display: block; }
+.shell[data-tool="library"] .library { display: block; overflow: auto; }
 .shell[data-tool="library"] .canvas { display: none; }
+
+.lib-wrap { max-width: 1040px; margin: 0 auto; padding: 30px 28px 48px; }
+.lib-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; flex-wrap: wrap; margin-bottom: 22px; }
+.lib-title { font-family: var(--font-serif); font-size: 26px; font-weight: 600; letter-spacing: -0.02em; margin: 0; }
+.lib-sub { font-size: 13px; color: var(--muted); margin: 4px 0 0; }
+.lib-tools { display: flex; align-items: center; gap: 10px; }
+.lib-search { display: inline-flex; align-items: center; gap: 7px; background: var(--white); border: 1px solid var(--vista); border-radius: 9px; padding: 7px 11px; }
+.lib-search svg { width: 15px; height: 15px; color: var(--soft); flex: none; }
+.lib-search input { border: none; outline: none; background: none; font: inherit; font-size: 13px; color: var(--ink); width: 150px; }
+.lib-clear { font-family: var(--font-display); font-size: 11px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; background: var(--white); border: 1px solid var(--vista); border-radius: 9px; padding: 8px 13px; color: var(--ink); cursor: pointer; transition: background 0.15s; }
+.lib-clear:hover { background: var(--hover); }
+
+.lib-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }
+.lib-empty { grid-column: 1 / -1; text-align: center; color: var(--soft); font-size: 13px; padding: 60px 0; }
+.lib-card { border: 1px solid var(--chrome-line); border-radius: 13px; background: var(--white); padding: 15px 16px; display: flex; flex-direction: column; gap: 9px; cursor: pointer; transition: border-color 0.15s, box-shadow 0.15s, transform 0.12s; }
+.lib-card:hover { border-color: var(--vista); box-shadow: 0 4px 16px rgba(0,0,0,0.06); transform: translateY(-1px); }
+.lib-card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.lib-name { font-size: 14px; font-weight: 600; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lib-badge { font-family: var(--font-display); font-size: 9.5px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; border-radius: 6px; padding: 4px 7px; flex: none; }
+.lib-badge[data-v="lane1"] { color: var(--ready); background: var(--ready-glow); }
+.lib-badge[data-v="lane2"] { color: var(--developer); background: var(--developer-glow); }
+.lib-badge[data-v="approve"] { color: var(--signoff); background: color-mix(in srgb, var(--signoff) 14%, var(--white)); }
+.lib-meta { font-size: 12px; color: var(--muted); }
+.lib-actions { display: flex; gap: 7px; margin-top: 3px; }
+.lib-act { font-family: var(--font-display); font-size: 10px; font-weight: 500; letter-spacing: 0.05em; text-transform: uppercase; background: var(--canvas); border: 1px solid var(--vista); border-radius: 8px; padding: 6px 10px; color: var(--ink); cursor: pointer; transition: background 0.15s, border-color 0.15s; }
+.lib-act:hover { background: var(--hover); }
+.lib-act.danger { color: var(--error-ink); border-color: color-mix(in srgb, var(--error-ink) 28%, var(--vista)); }
+.lib-act.danger:hover { background: color-mix(in srgb, var(--error-ink) 9%, var(--white)); }
+
+/* History sidebar rows are now re-openable */
+.recent { cursor: pointer; }
+.recent:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }

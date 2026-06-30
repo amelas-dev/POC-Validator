@@ -12,8 +12,11 @@ import { runAdvisor, checkAvailable, DEFAULT_MODEL } from './llm/advisor.js';
 import { wouldRelax } from './llm/clamp.js';
 import {
   cloudConfigured, initAuth, currentUser, isSignedIn, onAuth,
-  signIn, signUp, signOut, listChecks, insertCheck, clearChecks,
+  signIn, signUp, signOut, clearChecks,
 } from './cloud/supabase.js';
+// The asset Library: every checked tool is saved here (IndexedDB on this device, or
+// Supabase Storage when signed in) so History and the Library tool can re-open it.
+import { putAsset, getAsset, listAssets, deleteAsset, clearAssets } from './library/store.js';
 
 const $ = (s) => document.querySelector(s);
 const card = $('#card');       // the work canvas; data-state drives the view
@@ -358,7 +361,7 @@ let recordedRun = -1;
 function finalizeRead(run) {
   if (recordedRun === run) return;
   recordedRun = run;
-  recordCheck(lastResult);
+  saveToLibrary(corpus, lastResult);   // persist the check so History/Library can re-open it
 }
 
 // ---- Off-thread scan -------------------------------------------------------
@@ -909,6 +912,7 @@ function reset() {
 const TOOLS = [
   { id: 'validator', label: 'Validator', enabled: true, icon: '<circle cx="11" cy="11" r="7"/><path d="M16 16l4.5 4.5"/>' },
   { id: 'history', label: 'History', enabled: true, panel: 'side', icon: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>' },
+  { id: 'library', label: 'Library', enabled: true, icon: '<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/>' },
   { id: 'docs', label: 'Docs', enabled: true, panel: 'bottom', icon: '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/><path d="M9 13h6M9 16h5"/>' },
 ];
 
@@ -938,6 +942,7 @@ function selectTool(id) {
   shell.dataset.tool = id;
   $('#th-name').textContent = t.label;
   renderRail();
+  if (id === 'library') loadLibrary();
 }
 
 // ---- theme (Auto / Light / Dark), remembered -------------------------------
@@ -1024,7 +1029,7 @@ function buildSettings() {
     const themeBtn = e.target.closest('button[data-theme]');
     if (themeBtn) { applyTheme(themeBtn.dataset.theme); return; }
     const act = e.target.closest('[data-act]')?.dataset.act;
-    if (act === 'clear-recents') { clearRecents(); }
+    if (act === 'clear-recents') { clearAll(); }
     else if (act === 'open-playbook') { closeSettings(); setBottom(true); }
     else if (act === 'recheck-ai') recheckAI();
     else if (act === 'sign-in' || act === 'sign-up') doAuth(act);
@@ -1146,7 +1151,7 @@ async function doAuth(kind) {
   if (isSignedIn()) { authEmail = ''; authMsg = null; }
   syncAvatar();
   renderSettingsBody();
-  await loadRecents();          // pull this account's history (or fall back to local)
+  await loadLibrary();          // pull this account's saved checks (or fall back to local)
 }
 
 async function doSignOut() {
@@ -1156,7 +1161,7 @@ async function doSignOut() {
   authBusy = false; authMsg = null;
   renderSettingsBody();
   syncAvatar();
-  await loadRecents();
+  await loadLibrary();
 }
 
 function friendlyAuthError(e) {
@@ -1308,27 +1313,27 @@ async function recheckAI() {
 }
 
 function renderSetPrivacy() {
-  const n = recentsCache.length;
+  const n = libraryCache.length;
   const signedIn = isSignedIn();
   const where = signedIn ? 'in your account' : 'on this device';
   return `
     <div class="set-pane">
       <h3 class="set-h">Privacy &amp; data</h3>
-      <p class="set-sub">Your code is only ever read to score it — never changed. ${signedIn ? 'Your history and saved files sync to your private account.' : 'Without an account, everything stays on this device.'}</p>
+      <p class="set-sub">Your code is only ever READ to score it — never changed. Each check is saved to your Library ${where}${signedIn ? ', synced to your private account' : ' (it stays on this device unless you sign in)'} so you can re-open it.</p>
       <div class="set-card">
         <div class="set-row">
           <div class="set-rl">
             <div class="set-rt">Read-only</div>
-            <div class="set-rd">Your code is read to score it, then discarded — never stored.</div>
+            <div class="set-rd">Lane never modifies your code — it only reads it to produce the verdict.</div>
           </div>
           <span class="set-badge">Read-only</span>
         </div>
         <div class="set-row">
           <div class="set-rl">
-            <div class="set-rt">Recent checks</div>
-            <div class="set-rd">${n ? `${n} check${n === 1 ? '' : 's'} remembered ${where}.` : 'Nothing saved yet.'}</div>
+            <div class="set-rt">Saved checks</div>
+            <div class="set-rd">${n ? `${n} check${n === 1 ? '' : 's'} saved ${where}.` : 'Nothing saved yet.'}</div>
           </div>
-          <button class="set-btn danger" type="button" data-act="clear-recents" ${n ? '' : 'disabled'}>Clear history</button>
+          <button class="set-btn danger" type="button" data-act="clear-recents" ${n ? '' : 'disabled'}>Clear all</button>
         </div>
       </div>
     </div>`;
@@ -1380,45 +1385,83 @@ function resetFooter() {
   $('#foot-conf').textContent = '';
 }
 
-// ---- recents (the History seam) — a lightweight record per check, never code --
-// Signed in, the history lives in the user's cloud account (the `checks` table) so
-// it follows them across devices. Signed out, it stays in localStorage on this
-// device. `recentsCache` mirrors whichever is active so the sidebar can render
-// synchronously; loadRecents() refreshes it whenever the source changes.
-let recentsCache = store.get('recents', []);
+// ---- the Library — the single store of saved checks (History + Library tool) ----
+// Every checked tool is saved here as an asset (its corpus + last verdict) so it can be
+// re-opened later. Signed in -> the user's Supabase Storage; signed out -> IndexedDB on
+// this device (src/library/store.js routes it). `libraryCache` mirrors the store so the
+// sidebar and grid render synchronously; loadLibrary() refreshes it.
+let libraryCache = [];
+let skipNextSave = false;   // set while re-opening a saved check, so it isn't re-saved
 
-async function loadRecents() {
-  if (isSignedIn()) {
-    try { recentsCache = await listChecks(50); }
-    catch { recentsCache = []; }
-  } else {
-    recentsCache = store.get('recents', []);
-  }
+async function loadLibrary() {
+  try { libraryCache = await listAssets(); } catch { libraryCache = []; }
   renderSidebar();
-  if (setOverlay && !setOverlay.hidden && (setActive === 'privacy' || setActive === 'account')) renderSettingsBody();
+  if (shell.dataset.tool === 'library') renderLibrary();
+  if (setOverlay && !setOverlay.hidden && setActive === 'privacy') renderSettingsBody();
 }
 
-async function clearRecents() {
-  if (isSignedIn()) { try { await clearChecks(); } catch {} }
-  else store.set('recents', []);
-  recentsCache = [];
+// Persist the just-finished check (called once from finalizeRead). The corpus (code +
+// metadata + verdict) is stored as a JSON blob so it can be re-run; a re-open of an
+// already-saved check is skipped so it doesn't duplicate.
+async function saveToLibrary(corpus, result) {
+  if (!corpus || !result) return;
+  if (skipNextSave) { skipNextSave = false; return; }
+  try {
+    const id = (globalThis.crypto && crypto.randomUUID) ? crypto.randomUUID() : `a-${Math.floor(performance.now())}-${libraryCache.length}`;
+    const payload = { source: corpus.source, label: corpus.label, files: corpus.files, meta: corpus.meta, verdict: result.verdict.key, savedAt: Date.now() };
+    const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+    await putAsset({
+      id, createdAt: Date.now(), name: corpus.label || slugOf(result) || 'Check',
+      source: corpus.source, verdict: result.verdict.key, fileCount: (corpus.files || []).length,
+      type: 'application/lane-corpus', size: blob.size, blob,
+    });
+    await loadLibrary();
+  } catch { /* storage unavailable (private mode / quota) — degrade quietly */ }
+}
+
+// Re-open a saved check: load its corpus and run the pipeline again (no re-save).
+async function reopenAsset(id) {
+  let a; try { a = await getAsset(id); } catch { a = null; }
+  if (!a || !a.blob) return;
+  let p; try { p = JSON.parse(await a.blob.text()); } catch { return; }
+  setSidebar(false);
+  if (shell.dataset.tool !== 'validator') { shell.dataset.tool = 'validator'; $('#th-name').textContent = 'Validator'; renderRail(); }
+  skipNextSave = true;
+  run(() => Promise.resolve({ source: p.source || 'upload', label: p.label || a.name || 'Check', files: p.files || [], meta: p.meta || {}, notes: [] }));
+}
+
+// Download a saved check: the original file if it was a single file, else a JSON bundle.
+async function downloadAsset(id) {
+  let a; try { a = await getAsset(id); } catch { a = null; }
+  if (!a || !a.blob) return;
+  let p = null; try { p = JSON.parse(await a.blob.text()); } catch { /* leave p null */ }
+  let outBlob, outName;
+  if (p && Array.isArray(p.files) && p.files.length === 1) {
+    outBlob = new Blob([p.files[0].text || ''], { type: 'text/plain' });
+    outName = (p.files[0].path || a.name || 'file').split('/').pop();
+  } else if (p) {
+    outBlob = new Blob([JSON.stringify(p, null, 2)], { type: 'application/json' });
+    outName = `${String(a.name || 'check').replace(/[^\w.-]+/g, '_')}.lane.json`;
+  } else { outBlob = a.blob; outName = a.name || 'asset'; }
+  const url = URL.createObjectURL(outBlob);
+  const link = document.createElement('a'); link.href = url; link.download = outName;
+  document.body.appendChild(link); link.click(); link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function removeAsset(id) {
+  try { await deleteAsset(id); } catch {}
+  await loadLibrary();
+}
+
+async function clearAll() {
+  try { await clearAssets(); } catch {}
+  try { if (isSignedIn()) await clearChecks(); } catch {}   // also wipe any legacy audit rows
+  store.set('recents', []);
+  libraryCache = [];
   renderSidebar();
+  if (shell.dataset.tool === 'library') renderLibrary();
   if (setOverlay && !setOverlay.hidden) renderSettingsBody();
-}
-
-function recordCheck(r) {
-  if (!r) return;
-  const rec = { slug: slugOf(r), source: r.meta.source, verdict: r.verdict.key,
-    confidence: (r.confidence || {}).level || 'high' };
-  // optimistic: show it immediately, then persist to the active backend
-  recentsCache = [rec, ...recentsCache].slice(0, 50);
-  if (shell.dataset.side === 'open') renderSidebar();
-  if (isSignedIn()) { insertCheck(rec).catch(() => {}); }
-  else {
-    const list = store.get('recents', []);
-    list.unshift(rec);
-    store.set('recents', list.slice(0, 50));
-  }
 }
 
 // ============================================================================
@@ -1442,9 +1485,23 @@ function setBottom(open) {
 }
 
 const RECENT_LABEL = { lane1: 'Ready to host', lane2: 'Hand to a developer', approve: 'Needs a sign-off' };
+const VERDICT_SHORT = { lane1: 'Lane 1', lane2: 'Lane 2', approve: 'Approve' };
+const SOURCE_LABEL = { github: 'GitHub', upload: 'Upload', zip: 'Zip', paste: 'Paste', spreadsheet: 'Workbook' };
+const sourceLabel = (s) => SOURCE_LABEL[s] || 'Check';
+function relTime(ts) {
+  if (!ts) return '';
+  const s = Math.max(0, (Date.now() - ts) / 1000);
+  if (s < 60) return 'just now';
+  const m = s / 60; if (m < 60) return `${Math.floor(m)}m ago`;
+  const h = m / 60; if (h < 24) return `${Math.floor(h)}h ago`;
+  const d = h / 24; if (d < 7) return `${Math.floor(d)}d ago`;
+  return `${Math.floor(d / 7)}w ago`;
+}
+
+// History sidebar — saved checks, newest first, each re-openable (click).
 function renderSidebar() {
   const host = $('#side-body'); if (!host) return;
-  const list = recentsCache;
+  const list = libraryCache;
   if (!list.length) {
     host.innerHTML = `<div class="side-empty">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>
@@ -1452,12 +1509,34 @@ function renderSidebar() {
     </div>`;
     return;
   }
-  host.innerHTML = list.map((r) => `<div class="recent" role="listitem" data-v="${esc(r.verdict)}">
+  host.innerHTML = list.map((a) => `<div class="recent" role="button" tabindex="0" data-id="${esc(a.id)}" data-v="${esc(a.verdict || '')}" title="Re-open this check">
       <span class="rdot" aria-hidden="true"></span>
-      <span class="rtx"><span class="rslug">${esc(r.slug)}</span><span class="rmeta">${esc(RECENT_LABEL[r.verdict] || '')}${r.confidence && r.confidence !== 'high' ? ` · ${esc(r.confidence)} confidence` : ''}</span></span>
+      <span class="rtx"><span class="rslug">${esc(a.name || 'Check')}</span><span class="rmeta">${esc(a.verdict ? (RECENT_LABEL[a.verdict] || '') : sourceLabel(a.source))}${a.createdAt ? ` · ${esc(relTime(a.createdAt))}` : ''}</span></span>
     </div>`).join('')
     + `<button class="side-clear" id="side-clear" type="button">Clear history</button>`;
-  $('#side-clear')?.addEventListener('click', () => { clearRecents(); });
+}
+
+// Library tool — full-canvas grid of saved checks with re-check / download / remove.
+function renderLibrary() {
+  const grid = $('#lib-grid'); if (!grid) return;
+  const q = ($('#lib-search')?.value || '').trim().toLowerCase();
+  const items = libraryCache.filter((a) => !q || (a.name || '').toLowerCase().includes(q));
+  if (!items.length) {
+    grid.innerHTML = `<div class="lib-empty">${q ? 'No saved checks match your search.' : 'Nothing saved yet — run a check and it’ll appear here.'}</div>`;
+    return;
+  }
+  grid.innerHTML = items.map((a) => `<div class="lib-card" data-id="${esc(a.id)}">
+      <div class="lib-card-head">
+        <span class="lib-name" title="${esc(a.name || 'Check')}">${esc(a.name || 'Check')}</span>
+        ${a.verdict ? `<span class="lib-badge" data-v="${esc(a.verdict)}">${esc(VERDICT_SHORT[a.verdict] || '')}</span>` : ''}
+      </div>
+      <div class="lib-meta">${esc(sourceLabel(a.source))}${a.fileCount ? ` · ${a.fileCount} file${a.fileCount === 1 ? '' : 's'}` : ''}${a.createdAt ? ` · ${esc(relTime(a.createdAt))}` : ''}</div>
+      <div class="lib-actions">
+        <button class="lib-act" type="button" data-act="recheck" data-id="${esc(a.id)}">Re-check</button>
+        <button class="lib-act" type="button" data-act="download" data-id="${esc(a.id)}">Download</button>
+        <button class="lib-act danger" type="button" data-act="remove" data-id="${esc(a.id)}">Remove</button>
+      </div>
+    </div>`).join('');
 }
 
 // Learn where the read will run (local vs hosted) so the privacy line can be
@@ -1487,12 +1566,41 @@ function initShell() {
   initRead();
 
   // expandable panels — left sidebar · bottom drawer · right dock
-  renderSidebar();
+  loadLibrary();   // populate History/Library from the store (local now; cloud after initCloud)
   $('#panel-left')?.addEventListener('click', () => setSidebar(shell.dataset.side !== 'open'));
   $('#panel-bottom')?.addEventListener('click', () => setBottom(shell.dataset.bottom !== 'open'));
   $('#panel-right')?.addEventListener('click', () => { if (shell.dataset.dock === 'open') closeDrawer(); else openDrawer(); });
   $('#side-close')?.addEventListener('click', () => setSidebar(false));
   $('#bottom-close')?.addEventListener('click', () => setBottom(false));
+
+  // History sidebar (delegated): click a saved check to re-open it; or clear all.
+  $('#side-body')?.addEventListener('click', (e) => {
+    if (e.target.closest('#side-clear')) { clearAll(); return; }
+    const row = e.target.closest('.recent[data-id]');
+    if (row) reopenAsset(row.dataset.id);
+  });
+  $('#side-body')?.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const row = e.target.closest('.recent[data-id]');
+    if (row) { e.preventDefault(); reopenAsset(row.dataset.id); }
+  });
+
+  // Library tool (delegated): card buttons (re-check / download / remove), card body
+  // re-opens, search filters, "Clear all" wipes the library.
+  $('#lib-grid')?.addEventListener('click', (e) => {
+    const btn = e.target.closest('.lib-act[data-act]');
+    if (btn) {
+      const id = btn.dataset.id;
+      if (btn.dataset.act === 'recheck') reopenAsset(id);
+      else if (btn.dataset.act === 'download') downloadAsset(id);
+      else if (btn.dataset.act === 'remove') removeAsset(id);
+      return;
+    }
+    const card = e.target.closest('.lib-card[data-id]');
+    if (card) reopenAsset(card.dataset.id);
+  });
+  $('#lib-search')?.addEventListener('input', () => renderLibrary());
+  $('#lib-clear')?.addEventListener('click', () => clearAll());
 
   // restore remembered layout
   if (store.get('panel.side', false)) setSidebar(true);
@@ -1506,10 +1614,10 @@ function initShell() {
 // Resolve the saved session (if cloud is configured) and react to sign-in/out.
 async function initCloud() {
   if (!cloudConfigured()) return;
-  onAuth(() => { syncAvatar(); loadRecents(); });   // session refresh / token expiry
+  onAuth(() => { syncAvatar(); loadLibrary(); });   // session refresh / token expiry
   try { await initAuth(); } catch {}
   syncAvatar();
-  await loadRecents();   // signed in → pull cloud history; signed out → local
+  await loadLibrary();   // signed in → pull cloud library; signed out → local
 }
 
 initShell();
