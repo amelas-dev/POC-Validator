@@ -110,9 +110,22 @@ async function ghJson(url, token) {
   if (token) headers.Authorization = `Bearer ${token}`;
   const res = await fetch(url, { headers });
   if (!res.ok) {
-    const remaining = res.headers.get('x-ratelimit-remaining');
-    if (res.status === 403 && remaining === '0') {
-      throw new Error('GitHub API rate limit reached. Add a personal access token to continue, or upload the files directly.');
+    // 403/429 mean a rate limit. The PRIMARY (60/hr) limit sets
+    // x-ratelimit-remaining:0; a SECONDARY (abuse) limit — tripped by bursts of
+    // concurrent requests — returns 403 with a Retry-After header and/or a
+    // "rate limit" body but NO remaining:0. Recognize both, so a real rate limit
+    // surfaces the actionable "add a token" message rather than the generic
+    // "couldn't reach that repo" (which sent users chasing a network ghost).
+    if (res.status === 403 || res.status === 429) {
+      const remaining = res.headers.get('x-ratelimit-remaining');
+      const retryAfter = res.headers.get('retry-after');
+      let body = '';
+      try { body = await res.clone().text(); } catch { /* body may be unreadable */ }
+      if (remaining === '0' || retryAfter || /rate limit/i.test(body)) {
+        throw new Error('GitHub API rate limit reached. Add a personal access token to continue, or upload the files directly.');
+      }
+      // A non-rate-limit 403 means the repo is private / the token lacks access.
+      throw new Error('Repository not found, or it is private. Add a token, or upload the files directly.');
     }
     if (res.status === 404) throw new Error('Repository not found, or it is private. Add a token, or upload the files directly.');
     throw new Error(`GitHub request failed (${res.status}).`);
@@ -154,6 +167,14 @@ export async function loadFromGitHub(input, token, onProgress = () => {}) {
   // Fetch raw file bodies with bounded concurrency (browsers allow ~6 connections/host),
   // rather than one blocking round-trip at a time. Results are stored by index so the
   // surviving file SET and ORDER stay identical to the old sequential walk.
+  //
+  // Public repos read from raw.githubusercontent.com (a CDN): it is NOT bound by the
+  // 60/hr core-API limit and tolerates the concurrent burst, so a whole repo costs just
+  // the 2 API calls above (meta + tree) instead of one-per-file. Pulling every file
+  // through the rate-limited Contents API used to exhaust the limit / trip GitHub's
+  // secondary (abuse) limiter, surfacing as "couldn't reach that repo". A token means a
+  // private repo, which the raw CDN can't authenticate — those go through the
+  // authenticated Contents API (5000/hr, ample for the file cap).
   // Code files dropped by the file-count cap, PLUS code files dropped by the size/symlink
   // guard (textualAll - textual). Both are real code files we could not read — folding the
   // size-dropped set in here keeps them out of the "non-code" note (FIX-23).
@@ -165,8 +186,13 @@ export async function loadFromGitHub(input, token, onProgress = () => {}) {
     for (let i = nextIdx++; i < candidates.length; i = nextIdx++) {
       const node = candidates[i];
       try {
-        const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${node.path.split('/').map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(branch)}`;
-        const res = await fetch(apiUrl, { headers: { Accept: 'application/vnd.github.raw', ...(token ? { Authorization: `Bearer ${token}` } : {}) } });
+        const encPath = node.path.split('/').map(encodeURIComponent).join('/');
+        const res = token
+          ? await fetch(
+            `https://api.github.com/repos/${owner}/${repo}/contents/${encPath}?ref=${encodeURIComponent(branch)}`,
+            { headers: { Accept: 'application/vnd.github.raw', Authorization: `Bearer ${token}` } },
+          )
+          : await fetch(`https://raw.githubusercontent.com/${owner}/${repo}/${encodeURIComponent(branch)}/${encPath}`);
         if (res.ok) {
           let text = await res.text();
           let truncated = false;

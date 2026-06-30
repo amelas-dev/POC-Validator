@@ -5,7 +5,7 @@
 //
 //   node test/sources.test.mjs
 
-import { parseGitHubUrl, loadFromPaste, loadFromFileList } from '../src/engine/sources.js';
+import { parseGitHubUrl, loadFromPaste, loadFromFileList, loadFromGitHub } from '../src/engine/sources.js';
 import { buildCodeDigest } from '../src/llm/context.js';
 
 const R = '\x1b[31m', G = '\x1b[32m', X = '\x1b[0m', B = '\x1b[1m';
@@ -53,6 +53,52 @@ ok('note surfaces the 4MB total-limit drop', r2.notes.some((n) => /4MB total lim
 const envList = await loadFromFileList([fakeFile('.env.production', 'API_KEY=sk-x'), fakeFile('Dockerfile.dev', 'FROM node')]);
 ok('.env.production is analyzed (not dropped)', envList.files.some((f) => f.path === '.env.production'));
 ok('Dockerfile.dev is analyzed', envList.files.some((f) => f.path === 'Dockerfile.dev'));
+
+console.log(`${B}loadFromGitHub — rate-limit detection + raw-CDN bodies${X}`);
+// A tiny fetch double: route by URL substring so we can assert which host each
+// phase hits and replay GitHub's various 403 shapes.
+const withFetch = async (impl, fn) => {
+  const real = globalThis.fetch;
+  globalThis.fetch = impl;
+  try { return await fn(); } finally { globalThis.fetch = real; }
+};
+const res = (status, { body = '{}', headers = {} } = {}) =>
+  new Response(body, { status, headers });
+const grab = async (impl) => {
+  try { await withFetch(impl, () => loadFromGitHub('o/r', '', () => {})); return { threw: false }; }
+  catch (e) { return { threw: true, msg: e.message }; }
+};
+
+// SECONDARY (abuse) limit: 403 with Retry-After but NO x-ratelimit-remaining:0 —
+// the shape a concurrent burst trips. Must read as a rate limit, NOT "couldn't reach".
+const sec = await grab(() => res(403, { body: '{"message":"You have exceeded a secondary rate limit."}', headers: { 'retry-after': '60' } }));
+ok('secondary 403 -> rate-limit message', sec.threw && /rate limit/i.test(sec.msg));
+// PRIMARY limit: 403 + x-ratelimit-remaining:0.
+const prim = await grab(() => res(403, { headers: { 'x-ratelimit-remaining': '0' } }));
+ok('primary 403 -> rate-limit message', prim.threw && /rate limit/i.test(prim.msg));
+// 429 Too Many Requests with a rate-limit body.
+const tooMany = await grab(() => res(429, { body: '{"message":"API rate limit exceeded"}' }));
+ok('429 -> rate-limit message', tooMany.threw && /rate limit/i.test(tooMany.msg));
+// A non-rate-limit 403 (forbidden) maps to the private/not-found + token hint.
+const forbid = await grab(() => res(403, { body: '{"message":"Forbidden"}' }));
+ok('plain 403 -> private/not-found hint', forbid.threw && /private|not found/i.test(forbid.msg));
+// 404 -> private/not-found.
+const missing = await grab(() => res(404));
+ok('404 -> private/not-found hint', missing.threw && /private|not found/i.test(missing.msg));
+
+// Token-less (public) file bodies must come from the raw CDN, never the rate-limited
+// Contents API — guard against regressing back to per-file API calls.
+let hitRawCdn = false, hitContentsApi = false;
+await withFetch(async (url) => {
+  const u = String(url);
+  if (u.includes('/git/trees/')) return res(200, { body: JSON.stringify({ tree: [{ type: 'blob', path: 'app.js', size: 10 }] }) });
+  if (u.startsWith('https://api.github.com/repos/o/r/contents/')) { hitContentsApi = true; return res(200, { body: 'const x=1;' }); }
+  if (u.startsWith('https://raw.githubusercontent.com/o/r/')) { hitRawCdn = true; return res(200, { body: 'const x=1;' }); }
+  if (u === 'https://api.github.com/repos/o/r') return res(200, { body: JSON.stringify({ default_branch: 'main' }) });
+  return res(404);
+}, () => loadFromGitHub('o/r', '', () => {}));
+ok('public file bodies read from raw.githubusercontent.com', hitRawCdn);
+ok('public path does NOT call the rate-limited Contents API', !hitContentsApi);
 
 console.log(`${B}buildCodeDigest — hardened (FIX-16 / FIX-24)${X}`);
 ok('file missing path does not throw', (() => { try { buildCodeDigest({ files: [{ text: 'x=1' }] }); return true; } catch { return false; } })());

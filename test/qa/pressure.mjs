@@ -17,6 +17,14 @@ function mockGitHub({ defaultBranch = 'main', tree = [], contents = {}, repoStat
     const u = String(url);
     const headers = { get: (k) => (k.toLowerCase() === 'x-ratelimit-remaining' ? (rateLimited ? '0' : '59') : null) };
     if (u.includes('/git/trees/')) return { ok: true, status: 200, headers, async json() { return { tree }; } };
+    // Token-less (public) file bodies now come from the raw CDN: /{owner}/{repo}/{branch}/{path}.
+    if (u.includes('raw.githubusercontent.com')) {
+      const m = u.match(/raw\.githubusercontent\.com\/[^/]+\/[^/]+\/[^/]+\/(.+)$/);
+      const path = m ? m[1].split('/').map(decodeURIComponent).join('/') : '';
+      if (path in contents) return { ok: true, status: 200, headers, async text() { return contents[path]; } };
+      return { ok: false, status: 404, headers, async text() { return ''; } };
+    }
+    // Authenticated (private-repo) file bodies still go through the Contents API.
     if (u.includes('/contents/')) {
       const m = u.match(/\/contents\/([^?]+)\?/);
       const path = m ? m[1].split('/').map(decodeURIComponent).join('/') : '';
