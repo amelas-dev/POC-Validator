@@ -902,21 +902,25 @@ function reset() {
 // ============================================================================
 
 // The extensibility contract: one entry per tool (a rail icon + a canvas view +
-// optional dock/footer hooks). Adding a tool = one row here. Today only the
-// Validator is live; the rest are registered-but-dormant so the rail shows the
-// shape of the toolkit without dead links.
+// optional dock/footer hooks). Adding a tool = one row here. Validator is the main
+// canvas; History and Docs aren't separate canvases — they open the panel that already
+// holds that content (the recents sidebar = your history; the bottom Lanes reference =
+// the docs), so the rail icons are live toggles rather than dead "coming soon" links.
 const TOOLS = [
   { id: 'validator', label: 'Validator', enabled: true, icon: '<circle cx="11" cy="11" r="7"/><path d="M16 16l4.5 4.5"/>' },
-  { id: 'history', label: 'History', enabled: false, icon: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>' },
-  { id: 'docs', label: 'Docs', enabled: false, icon: '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/><path d="M9 13h6M9 16h5"/>' },
+  { id: 'history', label: 'History', enabled: true, panel: 'side', icon: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>' },
+  { id: 'docs', label: 'Docs', enabled: true, panel: 'bottom', icon: '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/><path d="M9 13h6M9 16h5"/>' },
 ];
 
 function renderRail() {
   const host = $('#rail-tools'); if (!host) return;
   host.innerHTML = TOOLS.map((t) => {
     const active = t.id === shell.dataset.tool;
+    // Panel tools (History/Docs) reflect their panel's open state instead of "current page".
+    const open = t.panel === 'side' ? shell.dataset.side === 'open' : t.panel === 'bottom' ? shell.dataset.bottom === 'open' : false;
+    const state = t.panel ? `aria-pressed="${open}"` : (active ? 'aria-current="page"' : '');
     return `<button class="rail-btn${t.enabled ? '' : ' dormant'}" type="button" role="listitem" data-tool="${t.id}"
-        ${t.enabled ? '' : 'disabled tabindex="-1"'} ${active ? 'aria-current="page"' : ''}
+        ${t.enabled ? '' : 'disabled tabindex="-1"'} ${state}
         aria-label="${esc(t.enabled ? t.label : t.label + ' — coming soon')}">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${t.icon}</svg>
         <span class="tip">${esc(t.enabled ? t.label : t.label + ' · soon')}</span>
@@ -927,6 +931,10 @@ function renderRail() {
 function selectTool(id) {
   const t = TOOLS.find((x) => x.id === id);
   if (!t || !t.enabled) return;
+  // History/Docs toggle their panel (recents = history, lanes reference = docs); the main
+  // canvas stays on the Validator. Only a true canvas tool switches shell.dataset.tool.
+  if (t.panel === 'side') { setSidebar(shell.dataset.side !== 'open'); return; }
+  if (t.panel === 'bottom') { setBottom(shell.dataset.bottom !== 'open'); return; }
   shell.dataset.tool = id;
   $('#th-name').textContent = t.label;
   renderRail();
@@ -1425,10 +1433,12 @@ function setSidebar(open) {
   shell.dataset.side = open ? 'open' : 'closed';
   syncPanelBtn('side', open); store.set('panel.side', open);
   if (open) renderSidebar();
+  renderRail();   // keep the rail History toggle's pressed state in sync
 }
 function setBottom(open) {
   shell.dataset.bottom = open ? 'open' : 'closed';
   syncPanelBtn('bottom', open); store.set('panel.bottom', open);
+  renderRail();   // keep the rail Docs toggle's pressed state in sync
 }
 
 const RECENT_LABEL = { lane1: 'Ready to host', lane2: 'Hand to a developer', approve: 'Needs a sign-off' };

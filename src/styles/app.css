@@ -1011,3 +1011,12 @@ button.set-row:hover { background: var(--hover); }
   .set-navitem.on span { display: inline; }
   .set-content { padding: 22px 18px; }
 }
+
+/* ---- Library tool — in progress -------------------------------------------
+   The #library markup ships but the tool isn't wired or styled yet, so by default
+   it must NOT render (its unstyled placeholder otherwise balloons into the main
+   canvas — a 976px magnifying-glass icon). Reveal it only when a real `library`
+   tool view is active; until then the Validator canvas owns the main region. */
+.library { display: none; }
+.shell[data-tool="library"] .library { display: block; }
+.shell[data-tool="library"] .canvas { display: none; }
