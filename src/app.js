@@ -1030,6 +1030,7 @@ function buildSettings() {
     if (themeBtn) { applyTheme(themeBtn.dataset.theme); return; }
     const act = e.target.closest('[data-act]')?.dataset.act;
     if (act === 'clear-recents') { clearAll(); }
+    else if (act === 'toggle-save') { store.set('save', !savingEnabled()); renderSettingsBody(); }
     else if (act === 'open-playbook') { closeSettings(); setBottom(true); }
     else if (act === 'recheck-ai') recheckAI();
     else if (act === 'sign-in' || act === 'sign-up') doAuth(act);
@@ -1315,11 +1316,12 @@ async function recheckAI() {
 function renderSetPrivacy() {
   const n = libraryCache.length;
   const signedIn = isSignedIn();
+  const saving = savingEnabled();
   const where = signedIn ? 'in your account' : 'on this device';
   return `
     <div class="set-pane">
       <h3 class="set-h">Privacy &amp; data</h3>
-      <p class="set-sub">Your code is only ever READ to score it — never changed. Each check is saved to your Library ${where}${signedIn ? ', synced to your private account' : ' (it stays on this device unless you sign in)'} so you can re-open it.</p>
+      <p class="set-sub">Your code is only ever READ to score it — never changed. ${saving ? `Each check is saved to your Library ${where}${signedIn ? ', synced to your private account' : ' (on this device unless you sign in)'} so you can re-open it.` : 'Saving is off — checks run without storing anything.'}</p>
       <div class="set-card">
         <div class="set-row">
           <div class="set-rl">
@@ -1327,6 +1329,13 @@ function renderSetPrivacy() {
             <div class="set-rd">Lane never modifies your code — it only reads it to produce the verdict.</div>
           </div>
           <span class="set-badge">Read-only</span>
+        </div>
+        <div class="set-row">
+          <div class="set-rl">
+            <div class="set-rt">Save my checks</div>
+            <div class="set-rd">${saving ? `Keeps a History &amp; Library you can re-open${signedIn ? ', synced to your account' : ' — stored only on this device'}. Up to ${MAX_LIBRARY} most-recent are kept.` : 'Off — nothing is stored; your code never leaves this page.'}</div>
+          </div>
+          <button class="set-switch${saving ? ' on' : ''}" type="button" role="switch" aria-checked="${saving}" data-act="toggle-save" aria-label="Save my checks"><span class="set-switch-dot"></span></button>
         </div>
         <div class="set-row">
           <div class="set-rl">
@@ -1400,12 +1409,21 @@ async function loadLibrary() {
   if (setOverlay && !setOverlay.hidden && setActive === 'privacy') renderSettingsBody();
 }
 
+// Data handling (best practice): saving is user-controllable and bounded. The Privacy
+// toggle `lane.save` (default on) gates ALL persistence — off means a check runs and is
+// never stored anywhere (your code never leaves the page). When on, it goes to this device
+// (IndexedDB) or your account (Supabase Storage, owner-only RLS) if signed in. We keep at
+// most MAX_LIBRARY recent checks (data minimization) so source can't accumulate unbounded.
+const MAX_LIBRARY = 50;
+const savingEnabled = () => store.get('save', true);
+
 // Persist the just-finished check (called once from finalizeRead). The corpus (code +
 // metadata + verdict) is stored as a JSON blob so it can be re-run; a re-open of an
 // already-saved check is skipped so it doesn't duplicate.
 async function saveToLibrary(corpus, result) {
   if (!corpus || !result) return;
   if (skipNextSave) { skipNextSave = false; return; }
+  if (!savingEnabled()) return;   // user turned saving off — nothing is stored
   try {
     const id = (globalThis.crypto && crypto.randomUUID) ? crypto.randomUUID() : `a-${Math.floor(performance.now())}-${libraryCache.length}`;
     const payload = { source: corpus.source, label: corpus.label, files: corpus.files, meta: corpus.meta, verdict: result.verdict.key, savedAt: Date.now() };
@@ -1416,6 +1434,9 @@ async function saveToLibrary(corpus, result) {
       type: 'application/lane-corpus', size: blob.size, blob,
     });
     await loadLibrary();
+    // retention cap — prune the oldest beyond MAX_LIBRARY (libraryCache is newest-first).
+    const extras = libraryCache.slice(MAX_LIBRARY);
+    if (extras.length) { for (const a of extras) { try { await deleteAsset(a.id); } catch {} } await loadLibrary(); }
   } catch { /* storage unavailable (private mode / quota) — degrade quietly */ }
 }
 
