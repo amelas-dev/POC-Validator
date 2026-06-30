@@ -1106,6 +1106,8 @@ function renderDrawer() {
     </div>`;
     return;
   }
+  // Each check as a design card: title + a status badge + plain desc, and a segmented
+  // control for anything we had to assume (changing it re-resolves the verdict).
   const rows = r.conditions.map((c) => {
     const def = COND[c.id] || {};
     let stClass, stText, copy;
@@ -1121,23 +1123,13 @@ function renderDrawer() {
     }
     const [label, desc] = splitCopy(copy);
     const assume = c.assumption ? assumeHTML(c.assumption) : '';
-    const ev = (c.evidence && c.evidence.length)
-      ? `<div class="tech">${c.evidence.map((e) => `<div class="ev"><span class="loc">${e.line ? esc(e.path) + ':' + e.line : esc(e.path)}</span>  ${esc(e.text)}</div>`).join('')}</div>`
-      : '';
-    return `<div class="chk">
-      <div class="ci ${stClass}">${ICONS[def.icon] || ICONS.check}</div>
-      <div class="cb">
-        <div class="cl">${esc(label)}</div>
-        ${desc ? `<div class="cd">${esc(desc)}</div>` : ''}
-        ${assume}
-        <div class="tech"><div class="meta-line"><button type="button" class="ref-link" data-ref="${esc(c.ref)}" title="Open the reference for ${esc(c.ref)}">${esc(c.ref)}</button> · ${ev ? `${c.evidence.length} place(s) in code` : 'no code evidence'}</div></div>
-        ${ev}
-      </div>
-      <span class="state ${stClass}">${esc(stText)}</span>
+    return `<div class="chk-card">
+      <div class="chk-top"><span class="chk-title">${esc(label)}</span><span class="chk-badge ${stClass}">${esc(stText)}</span></div>
+      ${desc ? `<div class="chk-desc">${esc(desc)}</div>` : ''}
+      ${assume}
     </div>`;
   }).join('');
 
-  const v = VERDICT[OUTCOME[r.verdict.key]];
   const conf = r.confidence || { level: 'high', reasons: [] };
   const confBlock = conf.level !== 'high'
     ? `<div class="cert-block"><span class="cert-conf cert-conf-${conf.level}">${conf.level} confidence — ${esc(conf.reasons[0] || '')}</span></div>` : '';
@@ -1147,10 +1139,12 @@ function renderDrawer() {
     .sort((a, b) => ((LANE_RANK[a[0].wouldBe] ?? 99) - (LANE_RANK[b[0].wouldBe] ?? 99)) || (a[1] - b[1]))
     .map((x) => x[0]);
   const lightenBlock = lighten.length ? `
-    <ol class="lighten-block lb-list">
-      <div class="lb-head"><span class="bolt">${ICONS.bolt}</span> What would make it lighter</div>
-      ${lightenSorted.map((l, i) => `<li class="lb-item"><span class="lb-num">${i + 1}.</span> ${esc(l.text)} ${l.wouldBe ? `<span class="lb-would">→ ${esc(WOULDBE[l.wouldBe] || 'lighter')}</span>` : ''}</li>`).join('')}
-    </ol>` : '';
+    <div class="lighter-list lighten-block">
+      <div class="lighter-head"><span class="lighter-coin">${ICONS.bolt}</span> What would make it lighter</div>
+      <ol class="lighter-items">
+        ${lightenSorted.map((l, i) => `<li><span class="ln">${i + 1}</span><span>${esc(l.text)}</span></li>`).join('')}
+      </ol>
+    </div>` : '';
   // Count only the user's own manual changes (module `overrides`) — NOT r.assumptions.
   // overridden, which is also true for the silent AI fill (that's not "you changed it").
   const changed = Object.keys(overrides).length;
@@ -1158,32 +1152,23 @@ function renderDrawer() {
     ? `<div class="provenance">You changed ${changed} of the app${"’"}s read${changed === 1 ? '' : 's'}.</div>`
     : '';
   $('#drawer-body').innerHTML = `
-    <p style="font-size:13px;color:var(--muted);line-height:1.5;margin:10px 0 6px">
-      ${esc(v.headline)} Every check below in plain words — adjust anything we had to assume and the read updates.
-    </p>
+    <p class="dock-intro">Every check below in plain words. Adjust anything we had to assume and the read updates.</p>
     ${confBlock}
     ${provBlock}
     ${lightenBlock}
-    ${rows}
-    <button class="tech-toggle" id="tech-toggle">Show technical detail</button>
-    <div class="meta-line" id="gov-line" style="display:none;margin-top:10px">
-      Governance: ${esc(r.verdict.lane)} · ${esc(r.tier)} tier · ${esc(r.posture)} logic.<br>${esc(r.verdict.hosting)}
+    <div class="dock-div"></div>
+    <div class="dock-eyebrow">Adjust the assumptions</div>
+    <div class="chk-cards">${rows}</div>
+    <div class="dock-foot">
+      <p class="dock-disclaimer">A quick read, not the final word — your <b>AI Operations Lead</b> makes the call, under your organisation${"’"}s POC triage &amp; hosting playbook.</p>
+      <div class="dock-tags">
+        <span>Where it runs</span><span>Risk tier</span><span>Data it works with</span><span>Writes to records</span><span>Logic posture</span><span>Runtime AI calls</span>
+      </div>
     </div>`;
 
   $('#drawer-body').querySelectorAll('.seg button').forEach((b) => b.addEventListener('click', () => {
     setOverride(b.dataset.kind, b.dataset.val); renderResult();   // renderResult refreshes the open dock
   }));
-  // §-ref deep-link: each condition's ref opens the bottom Lanes reference and
-  // scrolls to + briefly highlights the matching clause. If no row matches, the
-  // drawer still opens (the reference is the destination, not a dead end).
-  $('#drawer-body').querySelectorAll('.ref-link').forEach((b) => b.addEventListener('click', () => openReference(b.dataset.ref)));
-  let techOn = false;
-  $('#tech-toggle').addEventListener('click', () => {
-    techOn = !techOn;
-    $('#drawer-body').querySelectorAll('.tech').forEach((t) => t.classList.toggle('open', techOn));
-    $('#gov-line').style.display = techOn ? 'block' : 'none';
-    $('#tech-toggle').textContent = techOn ? 'Hide technical detail' : 'Show technical detail';
-  });
 }
 
 // An adjustable assumption row: the question + the choices, with the current read
@@ -1899,8 +1884,8 @@ function renderSidebar() {
     return;
   }
   host.innerHTML = list.map((a) => `<div class="recent" role="button" tabindex="0" data-id="${esc(a.id)}" data-v="${esc(a.verdict || '')}" title="Re-open this check" aria-label="${esc('Re-open ' + (a.name || 'check') + ' — ' + (RECENT_LABEL[a.verdict] || 'check'))}">
-      <span class="rdot" aria-hidden="true"></span>
-      <span class="rtx"><span class="rslug">${esc(a.name || 'Check')}</span><span class="rmeta">${esc(a.verdict ? (RECENT_LABEL[a.verdict] || '') : sourceLabel(a.source))}${a.createdAt ? ` · ${esc(relTime(a.createdAt))}` : ''}</span></span>
+      <span class="rslug">${esc(a.name || 'Check')}</span>
+      <span class="rrow"><span class="rdot" aria-hidden="true"></span><span class="rstatus">${esc(a.verdict ? (RECENT_LABEL[a.verdict] || '') : sourceLabel(a.source))}</span>${a.createdAt ? `<span class="rtime">${esc(relTime(a.createdAt))}</span>` : ''}</span>
     </div>`).join('')
     + `<button class="side-clear" id="side-clear" type="button">Clear history</button>`;
 }
